@@ -1,0 +1,94 @@
+"""Server-side contract for Bookly's support agent.
+
+``tools`` on a reply lists mocked tools the demo agent called
+(``lookup_order``, ``start_return``, ``send_password_reset``). A live
+provider can fill the same field when it calls real order and returns APIs.
+
+The chat UI does not import this module. Screens talk only to
+``frontend/src/agent/provider.ts``, which calls ``POST /api/chat`` and
+``GET /api/desk``. Implement this protocol again when a real model and
+the order and returns APIs are chosen. ``bookly_support.main`` is the
+only place that selects today's demo implementation.
+"""
+
+from __future__ import annotations
+
+from typing import Literal, Protocol
+
+from pydantic import BaseModel, Field, field_validator
+
+Intent = Literal[
+    "order_status",
+    "return_refund",
+    "shipping",
+    "password_reset",
+    "policy",
+    "clarify",
+    "out_of_scope",
+]
+
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("content")
+    @classmethod
+    def stripped_content(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("content is empty")
+        return stripped
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=40)
+
+    @field_validator("message")
+    @classmethod
+    def stripped_message(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("message is empty")
+        return stripped
+
+
+ToolName = Literal["lookup_order", "start_return", "send_password_reset"]
+
+
+class ToolTrace(BaseModel):
+    """A mocked tool the demo agent actually called while answering."""
+
+    name: ToolName
+    summary: str
+
+
+class ChatReply(BaseModel):
+    reply: str
+    intent: Intent
+    tools: list[ToolTrace] = Field(default_factory=list)
+
+
+class DeskOrder(BaseModel):
+    id: str
+    customer_name: str
+    email: str
+    summary: str
+
+
+class DeskInfo(BaseModel):
+    agent_name: str
+    can_help: list[str]
+    sample_orders: list[DeskOrder]
+    prompts: list[str]
+
+
+class AgentProvider(Protocol):
+    """Swap point for a live model and the order and returns APIs."""
+
+    def reply(self, request: ChatRequest) -> ChatReply:
+        """Answer one reader message using the conversation so far."""
+
+    def desk(self) -> DeskInfo:
+        """Describe what this desk can do and which sample orders it knows."""
