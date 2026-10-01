@@ -1,18 +1,17 @@
-"""HTTP desk for the Bookly support chat.
-
-The route handlers depend on ``AgentProvider``. ``build_provider`` is
-the only line that chooses the demo agent.
-"""
+"""HTTP desk for Becky's return chat."""
 
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from bookly_support.agent.mock import MockAgent
+from bookly_support.agent.phrasing import ClaudePhraser
 from bookly_support.agent.provider import AgentProvider, ChatReply, ChatRequest, DeskInfo
+from bookly_support.agent.return_agent import ReturnAgent
+from bookly_support.agent.store import MongoStore
+from bookly_support.config import load_settings
 
-app = FastAPI(title="Bookly support desk", version="0.1.0")
+app = FastAPI(title="Bookly support desk", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -22,22 +21,24 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
-def build_provider() -> AgentProvider:
-    """Return the agent implementation the API should call.
-
-    Swap ``MockAgent`` for a provider that uses a real model and the
-    order and returns APIs. The chat UI does not change.
-    """
-
-    return MockAgent()
 
 
-app.state.agent = build_provider()
+def build_provider() -> ReturnAgent:
+    settings = load_settings()
+    store = MongoStore(settings.mongodb_uri)
+    return ReturnAgent(store, ClaudePhraser(settings))
+
+
+def get_agent() -> ReturnAgent:
+    agent = getattr(app.state, "agent", None)
+    if agent is None:
+        agent = build_provider()
+        app.state.agent = agent
+    return agent
 
 
 def _agent(request: Request) -> AgentProvider:
-    agent: AgentProvider = request.app.state.agent
-    return agent
+    return get_agent()
 
 
 @app.get("/api/health")
@@ -47,7 +48,13 @@ def health() -> dict[str, str]:
 
 @app.get("/api/desk", response_model=DeskInfo)
 def desk(request: Request) -> DeskInfo:
-    return _agent(request).desk()
+    try:
+        return _agent(request).desk()
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="The order list didn't load.",
+        ) from None
 
 
 @app.post("/api/chat", response_model=ChatReply)
@@ -56,8 +63,8 @@ def chat(body: ChatRequest, request: Request) -> ChatReply:
         return _agent(request).reply(body)
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception:
         raise HTTPException(
             status_code=500,
             detail="The support desk failed before it could answer.",
-        ) from exc
+        ) from None

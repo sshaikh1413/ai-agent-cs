@@ -24,6 +24,7 @@ type DeskState =
   | { status: "ready"; info: DeskInfo }
 
 const provider = getAgentProvider()
+const CONVERSATION_KEY = "bookly.conversationId"
 
 function historyFrom(items: ThreadItem[], message: string): AgentTurn[] {
   const turns: AgentTurn[] = []
@@ -45,6 +46,9 @@ export function SupportDesk() {
   const scroller = useRef<HTMLDivElement>(null)
   const canSpeak = speechOutputSupported()
   const deskRequest = useRef(0)
+  const conversationId = useRef<string | null>(
+    typeof sessionStorage === "undefined" ? null : sessionStorage.getItem(CONVERSATION_KEY),
+  )
 
   async function loadDesk() {
     const requestId = deskRequest.current + 1
@@ -55,7 +59,7 @@ export function SupportDesk() {
       if (deskRequest.current === requestId) setDesk({ status: "ready", info })
     } catch (error) {
       if (deskRequest.current !== requestId) return
-      const message = error instanceof AgentDeskError ? error.message : "The sample order list didn't load."
+      const message = error instanceof AgentDeskError ? error.message : "The order list didn't load."
       setDesk({ status: "error", message })
     }
   }
@@ -82,7 +86,15 @@ export function SupportDesk() {
     stopSpeaking()
     setSpeakingId(null)
     try {
-      const reply = await provider.reply({ message, history: historyFrom(prior, message) })
+      const reply = await provider.reply({
+        message,
+        history: historyFrom(prior, message),
+        conversation_id: conversationId.current ?? undefined,
+      })
+      if (reply.conversation_id) {
+        conversationId.current = reply.conversation_id
+        sessionStorage.setItem(CONVERSATION_KEY, reply.conversation_id)
+      }
       setItems((current) =>
         current
           .filter((item) => item.id !== pendingId)
@@ -164,7 +176,7 @@ export function SupportDesk() {
           </div>
           <p className="text-right text-sm">
             <span className="font-serif text-lg">Mara</span>
-            <span className="hidden text-primary-foreground/80 sm:block">Orders, returns, and policies</span>
+            <span className="hidden text-primary-foreground/80 sm:block">Signed in as Becky Alvarez</span>
           </p>
         </div>
       </header>
@@ -175,7 +187,7 @@ export function SupportDesk() {
         </aside>
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           <details className="shrink-0 border-b border-border lg:hidden">
-            <summary className="px-4 py-3 text-sm font-semibold">Sample orders on this desk</summary>
+            <summary className="px-4 py-3 text-sm font-semibold">Recent orders</summary>
             <div className="max-h-64 overflow-y-auto px-4 pb-3">
               <DeskPanel desk={desk} busy={busy} onRetry={() => void loadDesk()} onAsk={send} compact />
             </div>
@@ -243,16 +255,16 @@ function DeskPanel({
         <>
           <h2 className="font-serif text-xl">What Mara can help with</h2>
           <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
-            <li>Where a print order is, once you have the order number or email.</li>
-            <li>A return or refund. She asks for the order, then the reason, before she confirms it.</li>
-            <li>Shipping, the return policy, and a password reset link.</li>
+            <li>A return for Becky Alvarez, who is already signed in.</li>
+            <li>Recent orders, including the one from about a week ago.</li>
+            <li>A refund to the Visa on file, or store credit, after she chooses.</li>
           </ul>
         </>
       ) : null}
-      <h2 className={`font-serif text-xl ${compact ? "" : "mt-6"}`}>Sample orders</h2>
+      <h2 className={`font-serif text-xl ${compact ? "" : "mt-6"}`}>Recent orders</h2>
       {desk.status === "loading" ? (
         <p className="mt-3 text-sm text-muted-foreground" role="status">
-          Loading the sample orders…
+          Loading recent orders…
         </p>
       ) : null}
       {desk.status === "error" ? (
@@ -273,7 +285,7 @@ function DeskPanel({
                 variant="outline"
                 disabled={busy}
                 className="h-auto min-h-11 w-full justify-start whitespace-normal px-3 py-2 text-left"
-                onClick={() => onAsk(`Where is order ${order.id}?`)}
+                onClick={() => onAsk(`I want to return ${order.id}`)}
               >
                 <span>
                   <span className="block font-semibold">{order.id}</span>
@@ -287,7 +299,7 @@ function DeskPanel({
         </ul>
       ) : null}
       <p className="mt-4 text-xs text-muted-foreground">
-        Sample records only. No live Bookly account is connected.
+        Signed in as Becky Alvarez. No separate login on this desk.
       </p>
     </div>
   )
@@ -309,16 +321,15 @@ function EmptyThread({
   return (
     <div className="mx-auto max-w-2xl pt-6 sm:pt-12">
       <h1 className="font-serif text-3xl leading-tight sm:text-4xl">
-        Ask Mara about an order, a return, or a Bookly policy.
+        Return a book from Becky's account.
       </h1>
       <p className="mt-4 text-base text-muted-foreground">
-        She checks where a book is, and she won't file a return until she has the order number and
-        the reason. She also covers shipping, the 30-day return window, and password reset. The
-        orders on this desk are samples, not a live account.
+        Mara can list recent orders, pick the one from about a week ago, and refund the Visa on
+        file or store credit after Becky chooses. The return is written only after that choice.
       </p>
       {desk.status === "loading" ? (
         <p className="mt-6 text-sm text-muted-foreground" role="status">
-          Loading sample questions…
+          Loading prompts…
         </p>
       ) : null}
       {desk.status === "error" ? (
@@ -326,7 +337,7 @@ function EmptyThread({
           <p className="text-sm text-destructive">{desk.message} You can still type a question.</p>
           <Button type="button" variant="outline" className="mt-2 h-11" onClick={onRetry}>
             <RotateCcw />
-            Reload sample questions
+            Reload prompts
           </Button>
         </div>
       ) : null}

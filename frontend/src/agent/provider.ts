@@ -31,9 +31,14 @@ export type AgentIntent =
 export interface AgentRequest {
   message: string
   history: AgentTurn[]
+  conversation_id?: string
 }
 
-export type ToolName = "lookup_order" | "start_return" | "send_password_reset"
+export type ToolName =
+  | "list_recent_orders"
+  | "get_order"
+  | "get_refund_options"
+  | "start_return"
 
 export interface ToolTrace {
   name: ToolName
@@ -44,6 +49,7 @@ export interface AgentReply {
   reply: string
   intent: AgentIntent
   tools: ToolTrace[]
+  conversation_id?: string
 }
 
 export interface DeskOrder {
@@ -72,7 +78,12 @@ export class AgentDeskError extends Error {
   }
 }
 
-const TOOLS = new Set<ToolName>(["lookup_order", "start_return", "send_password_reset"])
+const TOOLS = new Set<ToolName>([
+  "list_recent_orders",
+  "get_order",
+  "get_refund_options",
+  "start_return",
+])
 
 const INTENTS = new Set<AgentIntent>([
   "order_status",
@@ -119,10 +130,15 @@ function assertReply(value: unknown): AgentReply {
       "Mara's desk sent an unexpected reply. Nothing was filed.",
     )
   }
+  const conversation_id =
+    typeof record.conversation_id === "string" && record.conversation_id.trim()
+      ? record.conversation_id
+      : undefined
   return {
     reply: record.reply,
     intent: record.intent as AgentIntent,
     tools: assertTools(record.tools),
+    conversation_id,
   }
 }
 
@@ -156,19 +172,19 @@ function assertTools(value: unknown): ToolTrace[] {
 
 function assertDesk(value: unknown): DeskInfo {
   if (typeof value !== "object" || value === null) {
-    throw new AgentDeskError("The sample order list came back in an unexpected shape.")
+    throw new AgentDeskError("The order list came back in an unexpected shape.")
   }
   const record = value as Record<string, unknown>
   if (typeof record.agent_name !== "string" || !Array.isArray(record.sample_orders)) {
-    throw new AgentDeskError("The sample order list came back in an unexpected shape.")
+    throw new AgentDeskError("The order list came back in an unexpected shape.")
   }
   if (!Array.isArray(record.can_help) || !Array.isArray(record.prompts)) {
-    throw new AgentDeskError("The sample order list came back in an unexpected shape.")
+    throw new AgentDeskError("The order list came back in an unexpected shape.")
   }
   const sample_orders: DeskOrder[] = []
   for (const item of record.sample_orders) {
     if (typeof item !== "object" || item === null) {
-      throw new AgentDeskError("The sample order list came back in an unexpected shape.")
+      throw new AgentDeskError("The order list came back in an unexpected shape.")
     }
     const order = item as Record<string, unknown>
     if (
@@ -177,7 +193,7 @@ function assertDesk(value: unknown): DeskInfo {
       typeof order.email !== "string" ||
       typeof order.summary !== "string"
     ) {
-      throw new AgentDeskError("The sample order list came back in an unexpected shape.")
+      throw new AgentDeskError("The order list came back in an unexpected shape.")
     }
     sample_orders.push({
       id: order.id,
@@ -228,10 +244,10 @@ export function createHttpAgentProvider(baseUrl = apiBase()): AgentProvider {
         if (error instanceof DOMException && error.name === "AbortError") {
           throw error
         }
-        throw new AgentDeskError("The sample order list didn't load.")
+        throw new AgentDeskError("The order list didn't load.")
       }
       if (!response.ok) {
-        throw new AgentDeskError("The sample order list didn't load.")
+        throw new AgentDeskError("The order list didn't load.")
       }
       return assertDesk(await readJson(response))
     },

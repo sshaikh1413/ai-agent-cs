@@ -1,14 +1,7 @@
-"""Server-side contract for Bookly's support agent.
+"""Server-side contract for Bookly's return desk.
 
-``tools`` on a reply lists mocked tools the demo agent called
-(``lookup_order``, ``start_return``, ``send_password_reset``). A live
-provider can fill the same field when it calls real order and returns APIs.
-
-The chat UI does not import this module. Screens talk only to
-``frontend/src/agent/provider.ts``, which calls ``POST /api/chat`` and
-``GET /api/desk``. Implement this protocol again when a real model and
-the order and returns APIs are chosen. ``bookly_support.main`` is the
-only place that selects today's demo implementation.
+``tools`` lists the Mongo tools the state machine actually ran.
+The chat UI talks to ``frontend/src/agent/provider.ts``.
 """
 
 from __future__ import annotations
@@ -44,6 +37,7 @@ class ChatTurn(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     history: list[ChatTurn] = Field(default_factory=list, max_length=40)
+    conversation_id: str | None = Field(default=None, max_length=80)
 
     @field_validator("message")
     @classmethod
@@ -53,12 +47,25 @@ class ChatRequest(BaseModel):
             raise ValueError("message is empty")
         return stripped
 
+    @field_validator("conversation_id")
+    @classmethod
+    def stripped_conversation(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
-ToolName = Literal["lookup_order", "start_return", "send_password_reset"]
+
+ToolName = Literal[
+    "list_recent_orders",
+    "get_order",
+    "get_refund_options",
+    "start_return",
+]
 
 
 class ToolTrace(BaseModel):
-    """A mocked tool the demo agent actually called while answering."""
+    """A tool the return machine ran while answering."""
 
     name: ToolName
     summary: str
@@ -68,6 +75,7 @@ class ChatReply(BaseModel):
     reply: str
     intent: Intent
     tools: list[ToolTrace] = Field(default_factory=list)
+    conversation_id: str | None = None
 
 
 class DeskOrder(BaseModel):

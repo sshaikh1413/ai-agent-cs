@@ -1,20 +1,31 @@
-# Bookly support desk
+# Bookly return desk
 
-Mara is Bookly's customer support chat for an online bookstore. She handles three things:
+Mara helps Becky Alvarez return a book. Becky is already signed in as `cust_becky`. There is no login screen.
 
-- order status
-- returns and refunds
-- shipping, the return policy, and password reset
+The chat is the React desk (typed or spoken English, `en-US`). The API is a FastAPI state machine. It decides which Mongo tool may run. Claude phrases the tool JSON. A fact checker replaces the draft when an order id, receipt id, amount, date, or card tail was not in that JSON.
 
-This slice runs on sample bookstore records. There is no account login, no database, and no model, order, or speech-vendor API key. Speech uses the browser Web Speech API.
+Tools, each scoped by `customerId`:
 
-A return is not confirmed in one shot. Mara asks for the order number, then the reason, and only then calls `start_return`. Vague questions such as "where's my stuff?" get a clarifying question before any lookup. When she does look something up, the reply names the mocked tool she called: `lookup_order`, `start_return`, or `send_password_reset`.
+- `list_recent_orders`
+- `get_order`
+- `get_refund_options`
+- `start_return`
+
+"About a week ago" is a `placedAt` window of 5–9 days. One match is selected. Two matches are a question. `start_return` runs only after she chooses original payment or store credit, and a second call returns the same receipt.
 
 ## Requirements
 
-- CPython **3.12.14** (pinned in `.python-version` and `requires-python`)
+- CPython **3.12.14** (`.python-version` and `requires-python`)
 - [uv](https://docs.astral.sh/uv/) 0.12 or newer
 - Node.js 22 and npm
+
+## Secrets
+
+The process needs `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID`, and `MONGODB_URI`. `ANTHROPIC_MODEL` is optional; the desk always calls `claude-sonnet-5-5` (`anthropic:claude-sonnet-5-5`).
+
+Copy `.env.example` for the names. Put the values in the environment of the API process. Do not commit them.
+
+Pydantic AI 2.48.0 sends `extra_headers` on each Anthropic messages request. This app sets `anthropic-workspace-id` there, and also as the Anthropic client's `default_headers`, so every request from that client includes the workspace.
 
 ## Run locally
 
@@ -23,10 +34,10 @@ API on port **8642** (binds `0.0.0.0`):
 ```bash
 uv python install 3.12.14
 uv sync
-uv run uvicorn bookly_support.main:app --host 0.0.0.0 --port 8642 --reload
+uv run uvicorn bookly_support.main:app --host 0.0.0.0 --port 8642
 ```
 
-Chat UI on port **8643**, in a second terminal (binds `0.0.0.0`):
+Chat UI on port **8643**:
 
 ```bash
 cd frontend
@@ -34,37 +45,20 @@ npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:8643](http://127.0.0.1:8643). The Vite dev server proxies `/api` to the API. Leave `VITE_AGENT_BASE_URL` unset unless the API is on another origin (`frontend/.env.example`).
-
-## What the demo can answer
-
-| Order | Reader | On the desk |
-| --- | --- | --- |
-| BLY-10482 | Maya Chen (`maya.chen@email.com`) | Shipped. *The Midnight Library* and *Klara and the Sun*. Tracking BPX-4419082. |
-| BLY-10991 | Maya Chen | Delivered. *Project Hail Mary*. Return window still open. |
-| BLY-11004 | Jordan Okonkwo (`jordan.okonkwo@email.com`) | Delivered. *Tomorrow, and Tomorrow, and Tomorrow*. Return window closed. |
-| BLY-11120 | Jordan Okonkwo | Processing. *Circe*. Can be cancelled before it ships. |
-| BLY-09877 | Sam Rivera (`sam.rivera@email.com`) | Cancelled. *The House in the Cerulean Sea*. Refund already issued. |
-| BLY-11205 | Sam Rivera | Out for delivery. *Piranesi*. |
-
-Try these:
-
-- "Where is order BLY-10482?" — Mara calls `lookup_order` and shows the trace.
-- "I want to return a book." — she asks for the order number, then the reason, then calls `start_return`.
-- "Where's my stuff?" — she asks which order instead of guessing.
-- "I forgot my Bookly password." — she asks for the account email, then calls `send_password_reset`.
-- "How long does standard shipping take?" — warehouse, timing, and price. No tool call.
-
-Standard shipping is 5–7 business days and $5.95, free at $35 before tax. Expedited is 2 business days and $8.95. Returns are 30 days from delivery.
-
-## Replacing the mock
-
-The chat UI talks only to `frontend/src/agent/provider.ts`. That module calls `POST /api/chat` and `GET /api/desk`.
-
-The server-side contract is `src/bookly_support/agent/provider.py`. `build_provider()` in `src/bookly_support/main.py` is the only line that selects the demo agent. The mocked tools live in `src/bookly_support/agent/tools.py`. Swap those for a real model and live order, returns, and password APIs without rewriting the UI.
+Open [http://127.0.0.1:8643](http://127.0.0.1:8643). Vite proxies `/api` to the API.
 
 ## Tests
 
+Pure tests (no Atlas, no Claude):
+
 ```bash
-uv run pytest
+uv run pytest -m "not live"
 ```
+
+The Becky script against Atlas and Claude:
+
+```bash
+uv run pytest -m live
+```
+
+That script skips when the environment variables above are missing.
