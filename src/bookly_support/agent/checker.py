@@ -312,6 +312,8 @@ def unsupported_facts(reply: str, payload: object) -> list[str]:
     problems.extend(_ungrounded_author_or_plot(reply, payload, blob))
     problems.extend(_ungrounded_occasion(reply, payload))
     problems.extend(_ungrounded_fulfillment_status(reply, blob))
+    problems.extend(_ungrounded_delivered_claim(reply, payload))
+    problems.extend(_ungrounded_past_window(reply, payload))
     problems.extend(_ungrounded_status_detail(reply, payload, blob))
     problems.extend(_ungrounded_card_refund(reply, payload))
     problems.extend(_ungrounded_carrier(reply, blob))
@@ -394,6 +396,64 @@ _FULFILLMENT_STATUS = (
 
 # Glue in a status reply. A place or a trip sentence is not in this set.
 _STATUS_DETAIL_STOP = _PLOT_STOP | {"order", "orders", "which"}
+
+
+_PAST_WINDOW = re.compile(
+    r"\bpast the (?:\d+-day |return )?window\b|\boutside the (?:\d+-day )?return window\b",
+    re.IGNORECASE,
+)
+_POSITIVE_DELIVERED = re.compile(
+    r"\b(?:is|was|it is|it's|it\u2019s)\s+delivered\b",
+    re.IGNORECASE,
+)
+
+
+def _walk_dicts(node: object):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _walk_dicts(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _walk_dicts(value)
+
+
+def _payload_has_delivered_status(payload: object) -> bool:
+    for node in _walk_dicts(payload):
+        status = node.get("status")
+        if isinstance(status, str) and status.strip().casefold() == "delivered":
+            return True
+    return False
+
+
+def _payload_is_past_window(payload: object) -> bool:
+    for node in _walk_dicts(payload):
+        if node.get("window") == "past":
+            return True
+        mark = node.get("mark")
+        if isinstance(mark, str) and "past the" in mark.casefold():
+            return True
+    return False
+
+
+def _ungrounded_delivered_claim(reply: str, payload: object) -> list[str]:
+    """A claim that the book is delivered when that status is not in the payload."""
+
+    if _payload_has_delivered_status(payload):
+        return []
+    if _POSITIVE_DELIVERED.search(reply):
+        return ["delivered"]
+    return []
+
+
+def _ungrounded_past_window(reply: str, payload: object) -> list[str]:
+    """Past-window wording when this payload is not a book outside the window."""
+
+    if _payload_is_past_window(payload):
+        return []
+    if _PAST_WINDOW.search(reply):
+        return ["past the window"]
+    return []
 
 
 def _ungrounded_fulfillment_status(reply: str, blob: str) -> list[str]:

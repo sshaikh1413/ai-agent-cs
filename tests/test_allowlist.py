@@ -475,7 +475,11 @@ def test_closed_window_does_not_offer_a_refund() -> None:
     assert "get_refund_options" not in [tool.name for tool in turn.tools]
     assert "start_return" not in store.calls
     assert "30-day" in turn.template
-    assert session.phase == "identify_order"
+    assert "cannot go back on the card" in turn.template
+    assert "What happened with it?" in turn.template
+    assert session.phase == "exception_why"
+    assert session.order_id == "BLY-11004"
+    assert session.reason is None
 
 
 _CATALOG = [

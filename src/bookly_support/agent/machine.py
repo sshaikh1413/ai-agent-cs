@@ -20,9 +20,11 @@ from bookly_support.agent.resolve import (
     destination_choice,
     is_decline,
     is_password_reset,
+    is_in_progress,
     named_orders,
     resolve_order,
     resolve_status,
+    wants_return_in_play,
 )
 from bookly_support.agent.window import iso_day, spoken_date
 from bookly_support.agent.sentiment import label_sentiment
@@ -30,6 +32,7 @@ from bookly_support.agent.templates import (
     about_book,
     ask_anything_else,
     ask_reason,
+    ask_what_happened,
     closed,
     completed,
     empathy_horror,
@@ -297,11 +300,35 @@ class Machine:
             },
         )
         if not detail["eligible"]:
+            if not _is_delivered(detail):
+                status = detail.get("status")
+                required = [detail["title"], detail["orderId"]]
+                if isinstance(status, str) and status.strip():
+                    required.append(status.strip())
+                opened.payload.pop("policy", None)
+                return Turn(
+                    template=still_sending(detail),
+                    instruction=(
+                        "This order has not been delivered. Repeat the stored status from the JSON. "
+                        "Do not start a return. Do not say it is past the return window."
+                    ),
+                    tools=[opened],
+                    required=required,
+                )
+            self._remember_exception(session, detail)
+            opened.payload["window"] = "past"
+            opened.payload["storeCreditOnly"] = True
+            opened.payload["cardOffered"] = False
             return Turn(
                 template=outside_window(opened.payload),
-                instruction="The order is outside the return window. Say so and cite the policy. Do not offer a refund.",
-                tools=[listed, opened],
-                required=[detail["title"], detail["orderId"]],
+                instruction=(
+                    "This book is outside the return window, so it cannot go back on the card. "
+                    "Ask what happened with it. Stay on this order. "
+                    "Do not list other orders. Do not offer store credit, the Visa, or any amount yet."
+                ),
+                tools=[opened],
+                required=[detail["title"], detail["orderId"], str(detail["returnWindowDays"])],
+                step="Step: what happened",
             )
 
         return self._ask_why(session, detail, [listed, opened])
@@ -667,6 +694,51 @@ class Machine:
             step="Step: receipt",
         )
 
+    def _remember_exception(self, session: Session, detail: dict) -> None:
+        session.exception = True
+        session.order_id = detail["orderId"]
+        session.title = detail["title"]
+        genre = str(detail.get("genre") or "").strip().lower()
+        session.genre = genre or None
+        session.phase = "exception_why"
+        session.destination = None
+
+    def _reask_exception(self, session: Session, today: date) -> Turn:
+        detail = run_tool(
+            session.phase,
+            "get_order",
+            lambda: self._store.get_order(session.customer_id, session.order_id or "", today),
+        )
+        if detail is None or not session.title or not session.order_id:
+            return Turn(
+                template=missing_order(),
+                instruction="The order is not on this account. Say so. Do not invent an order.",
+                step="Step: what happened",
+            )
+        payload = {
+            "orderId": detail["orderId"],
+            "title": detail["title"],
+            "storeCreditOnly": True,
+            "cardOffered": False,
+        }
+        shown = {"title": detail["title"], "orderId": detail["orderId"]}
+        return Turn(
+            template=ask_what_happened(shown),
+            instruction=(
+                "Stay on this order. Ask what happened with it. "
+                "Do not list other books. Do not offer store credit or the card."
+            ),
+            tools=[
+                ToolTrace(
+                    name="get_order",
+                    summary=f"Opened {detail['orderId']}.",
+                    payload=payload,
+                )
+            ],
+            required=[detail["title"], detail["orderId"]],
+            step="Step: what happened",
+        )
+
     def _ask_why(self, session: Session, detail: dict, tools: list[ToolTrace]) -> Turn:
         session.exception = False
         session.order_id = detail["orderId"]
@@ -725,6 +797,11 @@ class Machine:
         if session.order_id is None or not session.title:
             session.phase = "which_book"
             return self._which_book(session, message, now.date(), now)
+        if wants_return_in_play(message):
+            if isinstance(session.reason, str) and session.reason.strip():
+                session.phase = "exception_offer"
+                return self._offer_exception(session)
+            return self._reask_exception(session, now.date())
         session.reason = message.strip()
         session.reason_kind = classify_reason(session.reason)
         session.sentiment = label_sentiment(session.reason)
@@ -804,22 +881,30 @@ class Machine:
         listed: ToolTrace,
     ) -> Turn:
         days = self._store.return_window_days()
-        marked = [_window_order(order, today, days) for order in orders if _is_delivered(order)]
+        marked = [_marked_order(order, today, days) for order in orders]
         listed.payload = {"orders": marked}
-        listed.summary = f"Listed {len(marked)} delivered orders with the return window."
+        listed.summary = f"Listed {len(marked)} recent orders with a delivery or trip mark."
         session.phase = "which_book"
         session.exception = False
         required: list[str] = []
         for order in marked:
             required.append(order["title"])
-            required.append(order["deliveredLabel"])
+            required.append(order["orderId"])
+            mark = order.get("mark")
+            if isinstance(mark, str) and mark.strip():
+                required.append(mark.strip())
+            label = order.get("deliveredLabel")
+            if isinstance(label, str) and label.strip():
+                required.append(label.strip())
         return Turn(
             template=delivered_window_list(marked),
             instruction=(
                 "They asked if it is too late and did not name a book. "
-                "Name each delivered title, its delivery date, and whether it is inside "
-                "the return window or past it. Use only the dates and titles in the JSON. "
-                "Do not mention a book that is still packing or on the way. "
+                "Name every recent order. Copy each mark from the JSON. "
+                "A delivered book is inside the window or past it. "
+                "A book still on the way keeps its stored trip status: "
+                "packing, shipped, on the way, or out for delivery. "
+                "Do not invent a status or a title. "
                 "Do not recite a stored reason. Do not say a return has started. "
                 "Ask which book."
             ),
@@ -853,22 +938,19 @@ class Machine:
         )
         if not _is_delivered(detail):
             session.phase = "which_book"
+            status = detail.get("status")
+            required = [detail["title"], detail["orderId"]]
+            if isinstance(status, str) and status.strip():
+                required.append(status.strip())
+            opened.payload.pop("policy", None)
             return Turn(
                 template=still_sending(detail),
                 instruction=(
-                    "This order has not been delivered. Say the status from the JSON. "
-                    "Say it is not past the return window. Do not start a return."
+                    "This order has not been delivered. Repeat the stored status from the JSON. "
+                    "Do not start a return. Do not say it is past the return window."
                 ),
-                tools=[listed, opened],
-                required=[
-                    detail["title"],
-                    detail["orderId"],
-                    *(
-                        [str(detail["status"]).strip()]
-                        if isinstance(detail.get("status"), str) and str(detail["status"]).strip()
-                        else []
-                    ),
-                ],
+                tools=[opened],
+                required=required,
                 step="Step: which book",
             )
         if detail["eligible"]:
@@ -884,12 +966,7 @@ class Machine:
         opened.payload["window"] = "past"
         opened.payload["cardBrand"] = "Visa"
         opened.payload["storeCreditOnly"] = True
-        session.exception = True
-        session.order_id = detail["orderId"]
-        session.title = detail["title"]
-        genre = str(detail.get("genre") or "").strip().lower()
-        session.genre = genre or None
-        session.phase = "exception_why"
+        self._remember_exception(session, detail)
         shown = {
             "title": detail["title"],
             "orderId": detail["orderId"],
@@ -950,15 +1027,26 @@ def _is_delivered(order: dict) -> bool:
     return isinstance(order.get("deliveredAt"), datetime)
 
 
-def _window_order(order: dict, today: date, days: int) -> dict:
-    delivered = order.get("deliveredAt")
-    if not isinstance(delivered, datetime):
-        raise RuntimeError("a delivered order needs a delivery date")
+def _marked_order(order: dict, today: date, days: int) -> dict:
+    """Plain-language group from deliveredAt, the policy window, and status."""
+
     public = _public_order(order)
-    public["deliveredOn"] = iso_day(delivered)
-    public["deliveredLabel"] = spoken_date(delivered)
-    public["window"] = "inside" if is_eligible(delivered, today, days) else "past"
     public["returnWindowDays"] = days
+    status = order.get("status")
+    label = status.strip() if isinstance(status, str) else ""
+    delivered = order.get("deliveredAt")
+    if isinstance(delivered, datetime) and label.casefold() == "delivered":
+        inside = is_eligible(delivered, today, days)
+        public["deliveredOn"] = iso_day(delivered)
+        public["deliveredLabel"] = spoken_date(delivered)
+        public["window"] = "inside" if inside else "past"
+        place = "inside" if inside else "past"
+        public["mark"] = f"Delivered and {place} the {days}-day window"
+        return public
+    if is_in_progress(order) and label:
+        public["mark"] = f"Still on the way, {label}"
+        return public
+    public["mark"] = label or "Still on the way"
     return public
 
 

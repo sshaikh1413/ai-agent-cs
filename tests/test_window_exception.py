@@ -39,7 +39,7 @@ def _session() -> Session:
     return Session(id="conv_window", customer_id="cust_becky")
 
 
-def test_too_late_lists_delivered_books_and_does_not_start_a_return() -> None:
+def test_too_late_lists_every_recent_order_with_its_mark() -> None:
     store = _store()
     turn = Machine(store).step(_session(), "Is it too late to return a book?", today=TODAY, now=NOW)
     assert [tool.name for tool in turn.tools] == ["list_recent_orders"]
@@ -48,14 +48,30 @@ def test_too_late_lists_delivered_books_and_does_not_start_a_return() -> None:
     assert turn.step == "Step: which book"
     assert "Piranesi" in turn.template
     assert "The Midnight Library" in turn.template
-    assert "Klara" not in turn.template
-    assert "past the 30 days" in turn.template
-    assert "inside the 30 days" in turn.template
+    assert "Klara and the Sun" in turn.template
+    assert "BLY-44120" in turn.template
+    assert "Delivered and past the 30-day window" in turn.template
+    assert "Delivered and inside the 30-day window" in turn.template
+    assert "Still on the way, packing" in turn.template
     assert "August 15, 2026" in turn.template
     assert "September 26, 2026" in turn.template
     assert unsupported_facts(turn.template, turn.payload) == []
-    windows = {order["title"]: order["window"] for order in turn.tools[0].payload["orders"]}
-    assert windows == {"Piranesi": "past", "The Midnight Library": "inside"}
+    marks = {order["title"]: order["mark"] for order in turn.tools[0].payload["orders"]}
+    assert marks == {
+        "Piranesi": "Delivered and past the 30-day window",
+        "The Midnight Library": "Delivered and inside the 30-day window",
+        "Klara and the Sun": "Still on the way, packing",
+    }
+    windows = {order["title"]: order.get("window") for order in turn.tools[0].payload["orders"]}
+    assert windows["Piranesi"] == "past"
+    assert windows["The Midnight Library"] == "inside"
+    assert "window" not in turn.tools[0].payload["orders"][2]
+    shipped = turn.template.replace("packing", "shipped")
+    assert "shipped" in unsupported_facts(shipped, turn.payload)
+    assert accept_draft(shipped, turn.template, turn.payload, turn.required) == turn.template
+    invented = f"{turn.template} The Silent Patient is still on the way."
+    assert any("Silent" in problem for problem in unsupported_facts(invented, turn.payload))
+    assert accept_draft(invented, turn.template, turn.payload, turn.required) == turn.template
 
 
 def test_old_title_asks_why_and_yes_writes_one_store_credit_exception() -> None:
@@ -100,6 +116,7 @@ def test_old_title_asks_why_and_yes_writes_one_store_credit_exception() -> None:
     assert "store credit" in held.template
     assert accepts_store_credit_exception("card is fine") is False
     assert accepts_store_credit_exception("yes") is True
+    assert accepts_store_credit_exception("I will take it") is True
 
     done = machine.step(session, "yes", today=TODAY, now=NOW)
     assert store.calls.count("start_return") == 1
@@ -205,12 +222,124 @@ def test_a_book_still_packing_is_not_past_the_window() -> None:
         today=TODAY,
         now=NOW,
     )
+    assert "Klara and the Sun" in turn.template
+    assert "has not been delivered" in turn.template
     assert "packing" in turn.template
-    assert "isn't past the return window" in turn.template
+    assert "past the" not in turn.template
+    assert "past the window" not in turn.template
     assert session.phase == "which_book"
     assert session.exception is False
+    assert session.order_id is None
     assert "start_return" not in store.calls
     assert unsupported_facts(turn.template, turn.payload) == []
+    called_past = f"{turn.template} It is past the return window."
+    assert accept_draft(called_past, turn.template, turn.payload, turn.required) == turn.template
+    called_delivered = turn.template.replace("has not been delivered", "is delivered")
+    assert accept_draft(called_delivered, turn.template, turn.payload, turn.required) == turn.template
+
+
+def _progress(order_id: str, title: str, status: str) -> dict:
+    return {
+        "orderId": order_id,
+        "title": title,
+        "placedAt": datetime(2026, 10, 1, 14, tzinfo=timezone.utc),
+        "status": status,
+        "refundableCents": 1600,
+        "paymentMethodId": "pm_becky_visa",
+    }
+
+
+def test_too_late_list_keeps_each_stored_trip_status() -> None:
+    store = FakeStore(
+        [
+            _order("BLY-18440", "Piranesi", date(2026, 8, 10), date(2026, 8, 15), 1599, "fantasy"),
+            _progress("BLY-44120", "Klara and the Sun", "packing"),
+            _progress("BLY-44121", "The Night Circus", "shipped"),
+            _progress("BLY-44122", "Educated", "on the way"),
+            _progress("BLY-44123", "Beach Read", "out for delivery"),
+        ]
+    )
+    turn = Machine(store).step(_session(), "Is it too late to return it?", today=TODAY, now=NOW)
+    assert turn.step == "Step: which book"
+    marks = {order["orderId"]: order["mark"] for order in turn.tools[0].payload["orders"]}
+    assert marks["BLY-18440"] == "Delivered and past the 30-day window"
+    assert marks["BLY-44120"] == "Still on the way, packing"
+    assert marks["BLY-44121"] == "Still on the way, shipped"
+    assert marks["BLY-44122"] == "Still on the way, on the way"
+    assert marks["BLY-44123"] == "Still on the way, out for delivery"
+    for order_id in ("BLY-44120", "BLY-44121", "BLY-44122", "BLY-44123"):
+        assert order_id in turn.template
+    assert "Delivered and past the 30-day window" in turn.template
+    assert "Still on the way, packing" in turn.template
+    assert "Still on the way, shipped" in turn.template
+    assert "Still on the way, on the way" in turn.template
+    assert "Still on the way, out for delivery" in turn.template
+    assert unsupported_facts(turn.template, turn.payload) == []
+    assert "start_return" not in store.calls
+
+
+def test_i_will_take_it_stays_on_the_past_window_book() -> None:
+    store = _store()
+    machine = Machine(store)
+    session = _session()
+    opened = machine.step(session, "I want to return Piranesi", today=TODAY, now=NOW)
+    assert session.phase == "exception_why"
+    assert session.order_id == "BLY-18440"
+    assert session.reason is None
+    assert opened.step == "Step: what happened"
+    assert "outside the 30-day return window" in opened.template
+    assert "cannot go back on the card" in opened.template
+    assert "What happened with it?" in opened.template
+    assert "The Midnight Library" not in opened.template
+    assert "Klara" not in opened.template
+    assert "Visa" not in opened.template
+    assert "store credit" not in opened.template.lower()
+    assert unsupported_facts(opened.template, opened.payload) == []
+    assert "start_return" not in store.calls
+
+    for phrase in ("I will take it", "I'll take it", "yes"):
+        fresh = _session()
+        machine.step(fresh, "I want to return Piranesi", today=TODAY, now=NOW)
+        held = machine.step(fresh, phrase, today=TODAY, now=NOW)
+        assert fresh.phase == "exception_why"
+        assert fresh.order_id == "BLY-18440"
+        assert fresh.reason is None
+        assert "What happened with it?" in held.template
+        assert "The Midnight Library" not in held.template
+        assert "Klara" not in held.template
+        assert "Which one do you want to return?" not in held.template
+        assert "store credit" not in held.template.lower()
+        assert "Visa" not in held.template
+        assert held.step == "Step: what happened"
+        assert unsupported_facts(held.template, held.payload) == []
+
+    assert "start_return" not in store.calls
+    ready = _session()
+    machine.step(ready, "return BLY-18440", today=TODAY, now=NOW)
+    ready.reason = REASON
+    ready.reason_kind = "other"
+    offer = machine.step(ready, "I will take it", today=TODAY, now=NOW)
+    assert ready.phase == "exception_offer"
+    assert ready.order_id == "BLY-18440"
+    assert ready.reason == REASON
+    assert "store credit" in offer.template
+    assert "Visa" not in offer.template
+    assert "The Midnight Library" not in offer.template
+    assert "Which one do you want to return?" not in offer.template
+    assert "start_return" not in store.calls
+
+    held_card = machine.step(ready, "card is fine", today=TODAY, now=NOW)
+    assert ready.phase == "exception_offer"
+    assert "start_return" not in store.calls
+    assert "store credit" in held_card.template
+    assert "Visa" not in held_card.template
+
+    done = machine.step(ready, "I will take it", today=TODAY, now=NOW)
+    assert store.calls.count("start_return") == 1
+    assert done.tools[0].payload["destination"] == "store_credit"
+    assert done.tools[0].payload["exception"] is True
+    assert "Visa" not in done.template
+    assert done.step == "Step: receipt and label"
 
 
 def test_card_refund_of_an_ineligible_order_still_fails() -> None:

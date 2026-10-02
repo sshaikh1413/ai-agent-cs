@@ -213,7 +213,10 @@ def test_a_status_question_does_not_start_a_return() -> None:
         now=NOW,
     )
     assert blocked.step == "Step: which order"
-    assert "30-day" in blocked.template
+    assert "has not been delivered" in blocked.template
+    assert "packing" in blocked.template
+    assert "past the" not in blocked.template
+    assert "30-day" not in blocked.template
     assert "get_refund_options" not in [tool.name for tool in blocked.tools]
     assert "start_return" not in [tool.name for tool in blocked.tools]
     assert "start_return" not in store.calls

@@ -40,9 +40,21 @@ def week_none(orders: list[dict]) -> str:
 
 
 def outside_window(order: dict) -> str:
+    """The delivered book is past the window. Ask what happened. The card is closed."""
+
     return (
         f"{order['title']}, order {order['orderId']}, is outside the "
-        f"{order['returnWindowDays']}-day return window. {order['policy']}"
+        f"{order['returnWindowDays']}-day return window, so it cannot go back on the card. "
+        "What happened with it?"
+    )
+
+
+def ask_what_happened(order: dict) -> str:
+    """Stay on the book already in play. Do not list the other orders."""
+
+    return (
+        f"I'll stay with {order['title']}, order {order['orderId']}. "
+        "It cannot go back on the card. What happened with it?"
     )
 
 
@@ -248,30 +260,26 @@ def no_order_in_progress() -> str:
 
 
 def delivered_window_list(orders: list[dict]) -> str:
-    """Delivered books only, each marked inside the window or past it."""
+    """Every recent order, with the mark computed from the order."""
 
     if not orders:
-        return "I don't see a delivered book on this account, so nothing is past the return window."
-    parts = [_window_line(order) for order in orders]
-    if len(parts) == 1:
-        listed = parts[0]
-    elif len(parts) == 2:
-        listed = f"{parts[0]}, and {parts[1]}"
-    else:
-        listed = ", ".join(parts[:-1]) + ", and " + parts[-1]
-    return (
-        "These are the books that have been delivered. "
-        f"{listed}. Which book did you mean?"
-    )
+        return "I don't see a recent order on this account."
+    lines = " ".join(_window_line(order) for order in orders)
+    return f"Here are the recent orders. {lines} Which book did you mean?"
 
 
 def _window_line(order: dict) -> str:
-    days = order["returnWindowDays"]
-    place = "past" if order.get("window") == "past" else "inside"
-    return (
-        f"{order['title']}, order {order['orderId']}, delivered {order['deliveredLabel']}, "
-        f"is {place} the {days} days"
-    )
+    mark = str(order.get("mark") or "").strip()
+    title = order["title"]
+    order_id = order["orderId"]
+    label = order.get("deliveredLabel")
+    if isinstance(label, str) and label.strip():
+        head = f"{title}, order {order_id}, delivered {label.strip()}."
+    else:
+        head = f"{title}, order {order_id}."
+    if mark:
+        return f"{head} {mark}."
+    return head
 
 
 def past_window_why(order: dict) -> str:
@@ -285,12 +293,12 @@ def past_window_why(order: dict) -> str:
 
 
 def still_sending(order: dict) -> str:
-    """Packing or on the way is not past the return window."""
+    """Not delivered. Repeat the stored trip status. Do not call it past the window."""
 
     status = order.get("status") or "still being sent"
     return (
-        f"{order['title']}, order {order['orderId']}, is {status}. "
-        "It hasn't arrived, so it isn't past the return window."
+        f"{order['title']}, order {order['orderId']}, has not been delivered. "
+        f"It's {status}."
     )
 
 

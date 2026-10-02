@@ -227,19 +227,32 @@ _YES = {
     "i accept",
     "i'll take it",
     "ill take it",
+    "i will take it",
     "sounds good",
     "do it",
     "go ahead",
 }
 
 
+def wants_return_in_play(text: str) -> bool:
+    """Yes to the book already named. This is not a reason and not a card choice.
+
+    After the window line, these words stay on that order. They do not pick
+    a different book, and they do not describe what happened.
+    """
+
+    lowered = _clean(text).replace("\u2019", "'").replace("\u2018", "'").strip(".!")
+    return lowered in {"yes", "i'll take it", "ill take it", "i will take it"}
+
+
 def accepts_store_credit_exception(text: str) -> bool:
     """Yes to the store-credit exception. A card phrase is not a yes.
 
     "Card is fine" stays on the offer. It does not select the Visa.
+    "I will take it" does accept the exception once it is on offer.
     """
 
-    lowered = _clean(text).strip(".!")
+    lowered = _clean(text).replace("\u2019", "'").replace("\u2018", "'").strip(".!")
     if is_decline(lowered):
         return False
     original, store = _destination_flags(lowered)

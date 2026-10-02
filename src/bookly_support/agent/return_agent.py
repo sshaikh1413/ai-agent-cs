@@ -48,7 +48,7 @@ class ReturnAgent:
                 "Why the book is coming back, before any refund.",
                 "A refund to the original card or to store credit, after they choose.",
                 "A one-page PDF receipt after the return is written.",
-                "A too-late question lists delivered books and whether each is inside the 30 days.",
+                "A too-late question lists every recent order, delivered or still on the way.",
                 "A past-window book can be a one-time store-credit exception, with a receipt and a parcel label.",
             ],
             sample_orders=[
