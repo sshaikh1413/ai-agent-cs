@@ -456,11 +456,53 @@ def facts_allowed(reply: str, payload: object) -> bool:
     return not unsupported_facts(reply, payload)
 
 
-def accept_draft(draft: str | None, template: str, payload: object, required: list[str]) -> str:
+_YOU_SAID = re.compile(r"\byou said\b", re.IGNORECASE)
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9']+", text.lower())
+
+
+def recites_prior_reason(reply: str, message: str, prior: str) -> bool:
+    """True when the draft repeats last time's reason and this message does not.
+
+    A short welcome is fine. Pasting their earlier sentence, or saying
+    "you said", is not, unless those words are in what they just typed.
+    """
+
+    if _YOU_SAID.search(reply) and not _YOU_SAID.search(message or ""):
+        return True
+    reason_words = _words(prior or "")
+    if len(reason_words) < 2:
+        return False
+    window = 4 if len(reason_words) >= 4 else len(reason_words)
+    reply_blob = " ".join(_words(reply))
+    message_blob = " ".join(_words(message or ""))
+    for start in range(0, len(reason_words) - window + 1):
+        phrase = " ".join(reason_words[start : start + window])
+        if phrase in reply_blob and phrase not in message_blob:
+            return True
+    return False
+
+
+def accept_draft(
+    draft: str | None,
+    template: str,
+    payload: object,
+    required: list[str],
+    message: str | None = None,
+    prior_reason: str | None = None,
+) -> str:
     if draft is None or not draft.strip():
         return template
     text = draft.strip()
     if not facts_allowed(text, payload):
+        return template
+    if (
+        isinstance(prior_reason, str)
+        and prior_reason.strip()
+        and recites_prior_reason(text, message or "", prior_reason)
+    ):
         return template
     if any(item not in text for item in required):
         return template

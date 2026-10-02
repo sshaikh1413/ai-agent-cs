@@ -63,7 +63,7 @@ class ReturnAgent:
                 "Where is my order",
             ],
             profile=list(PROFILE_LINES),
-            opening=self._opening(customer_id),
+            opening=_welcome(*self._visit(customer_id), _customer_name(customer)),
         )
 
     def reply(self, request: ChatRequest) -> ChatReply:
@@ -72,7 +72,8 @@ class ReturnAgent:
         now = datetime.now(timezone.utc)
         turn = self._machine.step(session, request.message, today=now.date(), now=now)
         name = _customer_name(self.store.get_customer(customer_id))
-        text = self._say(turn, request.message, name)
+        prior, memory = self._visit(customer_id)
+        text = self._say(turn, request.message, name, memory)
         self.store.save_session(_session_doc(session))
         return ChatReply(
             reply=text,
@@ -81,7 +82,7 @@ class ReturnAgent:
             conversation_id=session.id,
             receipt=receipt_download(turn, customer_id),
             step=turn.step,
-            opening=self._opening(customer_id) if started else None,
+            opening=_welcome(prior, memory, name) if started else None,
         )
 
     def _session_for(self, customer_id: str, conversation_id: str | None) -> tuple[Session, bool]:
@@ -92,21 +93,35 @@ class ReturnAgent:
         document = self.store.create_session(customer_id)
         return _session(document), True
 
-    def _opening(self, customer_id: str) -> str | None:
-        prior = self.store.latest_completed_return(customer_id)
-        if not prior:
-            return None
-        title = prior.get("title")
-        if not isinstance(title, str) or not title.strip():
-            return None
-        reason = prior.get("reason")
-        reason_text = reason.strip() if isinstance(reason, str) and reason.strip() else None
-        name = _customer_name(self.store.get_customer(customer_id))
-        return opening_line(title.strip(), reason_text, name)
+    def _visit(self, customer_id: str) -> tuple[dict | None, dict | None]:
+        """The latest return, and a memory row only when a reason was stored."""
 
-    def _say(self, turn: Turn, message: str, customer_name: str | None) -> str:
-        draft = self.phraser.phrase(turn, message, customer_name)
-        return accept_draft(draft, turn.template, turn.payload, turn.required)
+        prior = _prior_return(self.store, customer_id)
+        memory = _phrase_memory(customer_id, prior)
+        if memory is None:
+            reader = getattr(self.store, "customer_memory", None)
+            if reader is not None:
+                memory = _phrase_memory(customer_id, reader(customer_id))
+        return prior, memory
+
+    def _say(
+        self,
+        turn: Turn,
+        message: str,
+        customer_name: str | None,
+        memory: dict | None,
+    ) -> str:
+        draft = self.phraser.phrase(turn, message, customer_name, memory)
+        prior_reason = memory.get("reason") if isinstance(memory, dict) else None
+        reason = prior_reason if isinstance(prior_reason, str) and prior_reason.strip() else None
+        return accept_draft(
+            draft,
+            turn.template,
+            turn.payload,
+            turn.required,
+            message,
+            reason,
+        )
 
 
 _RECEIPT_ID = re.compile(r"rcpt_[a-z0-9]+")
@@ -139,6 +154,53 @@ def _newest_delivered(orders: list[dict]) -> dict | None:
         if isinstance(status, str) and status.strip().casefold() == "delivered":
             return order
     return None
+
+
+def _welcome(prior: dict | None, memory: dict | None, customer_name: str | None) -> str | None:
+    """A human hello when they've been here. It does not quote the stored reason."""
+
+    titled = False
+    if isinstance(prior, dict):
+        title = prior.get("title")
+        titled = isinstance(title, str) and bool(title.strip())
+    if memory is None and not titled:
+        return None
+    return opening_line(customer_name)
+
+
+def _prior_return(store: MongoStore, customer_id: str) -> dict | None:
+    latest = getattr(store, "latest_completed_return", None)
+    if latest is None:
+        return None
+    prior = latest(customer_id)
+    if not isinstance(prior, dict):
+        return None
+    return prior
+
+
+def _phrase_memory(customer_id: str, record: dict | None) -> dict | None:
+    """Memory for phrasing. No reason text means there is nothing to remember."""
+
+    if not isinstance(record, dict):
+        return None
+    reason = record.get("reason")
+    title = record.get("title")
+    if not isinstance(reason, str) or not reason.strip():
+        return None
+    if not isinstance(title, str) or not title.strip():
+        return None
+    order_id = record.get("orderId")
+    reason_kind = record.get("reasonKind")
+    sentiment = record.get("sentiment")
+    stored_customer = record.get("customerId")
+    return {
+        "customerId": stored_customer if isinstance(stored_customer, str) and stored_customer.strip() else customer_id,
+        "orderId": order_id if isinstance(order_id, str) and order_id.strip() else None,
+        "title": title.strip(),
+        "reason": reason.strip(),
+        "reasonKind": reason_kind.strip() if isinstance(reason_kind, str) and reason_kind.strip() else None,
+        "sentiment": sentiment.strip() if isinstance(sentiment, str) and sentiment.strip() else None,
+    }
 
 
 def _customer_name(customer: dict | None) -> str | None:

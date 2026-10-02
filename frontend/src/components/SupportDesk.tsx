@@ -76,10 +76,13 @@ export function SupportDesk() {
   const canSpeak = speechOutputSupported()
   const deskRequest = useRef(0)
   const [customerId, setCustomerId] = useState<CustomerId>(storedCustomer)
+  const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState<string | null>(null)
   const customerIdRef = useRef<CustomerId>(customerId)
   const conversationId = useRef<string | null>(
     typeof sessionStorage === "undefined" ? null : sessionStorage.getItem(conversationKey(customerId)),
   )
+  const locked = busy || resetting
 
   async function loadDesk(forCustomer: CustomerId = customerIdRef.current) {
     const requestId = deskRequest.current + 1
@@ -112,8 +115,29 @@ export function SupportDesk() {
     }
   }
 
+  async function resetDemo() {
+    if (locked) return
+    setResetting(true)
+    setResetError(null)
+    stopSpeaking()
+    setSpeakingId(null)
+    try {
+      await provider.resetDemo()
+      sessionStorage.removeItem(conversationKey("cust_becky"))
+      sessionStorage.removeItem(conversationKey("cust_bob"))
+      conversationId.current = null
+      setItems([])
+      await loadDesk(customerIdRef.current)
+    } catch (error) {
+      const message = error instanceof AgentDeskError ? error.message : "The demo didn't reset. Try again in a moment."
+      setResetError(message)
+    } finally {
+      setResetting(false)
+    }
+  }
+
   function signIn(next: CustomerId) {
-    if (next === customerIdRef.current || busy) return
+    if (next === customerIdRef.current || locked) return
     stopSpeaking()
     setSpeakingId(null)
     sessionStorage.removeItem(conversationKey(next))
@@ -198,7 +222,7 @@ export function SupportDesk() {
 
   function send(text: string) {
     const message = text.trim()
-    if (!message || busy) return
+    if (!message || locked) return
     const pendingId = crypto.randomUUID()
     const prior = items
     setItems([
@@ -210,7 +234,7 @@ export function SupportDesk() {
   }
 
   function retry(errorId: string, message: string) {
-    if (busy) return
+    if (locked) return
     const pendingId = crypto.randomUUID()
     const prior = items.filter((item) => item.id !== errorId)
     setItems([...prior, { id: pendingId, kind: "pending" }])
@@ -249,7 +273,18 @@ export function SupportDesk() {
               <p className="text-sm text-primary-foreground/80">Support desk</p>
             </div>
           </div>
-          <div className="flex flex-col items-end gap-1">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={locked}
+              className="min-h-11 border border-primary-foreground/40 bg-primary-foreground/10 px-3 text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground"
+              onClick={() => void resetDemo()}
+            >
+              <RotateCcw />
+              Reset demo
+            </Button>
+            <div className="flex flex-col items-end gap-1">
             <p className="font-serif text-lg leading-none">Mara</p>
             <div role="radiogroup" aria-label="Signed-in reader" className="flex rounded-lg bg-primary-foreground/10 p-0.5">
               {READERS.map((reader) => {
@@ -261,7 +296,7 @@ export function SupportDesk() {
                     role="radio"
                     aria-checked={selected}
                     variant="ghost"
-                    disabled={busy}
+                    disabled={locked}
                     className={
                       selected
                         ? "min-h-11 bg-primary-foreground px-3 text-primary hover:bg-primary-foreground hover:text-primary"
@@ -274,19 +309,25 @@ export function SupportDesk() {
                 )
               })}
             </div>
+            </div>
           </div>
         </div>
       </header>
+      {resetError ? (
+        <p className="bg-destructive/10 px-4 py-2 text-center text-sm text-destructive" role="alert">
+          {resetError}
+        </p>
+      ) : null}
 
       <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1">
         <aside className="hidden w-96 shrink-0 flex-col border-r border-border bg-secondary/50 lg:flex">
-          <DeskPanel desk={desk} busy={busy} customerId={customerId} onRetry={() => void loadDesk()} onAsk={send} />
+          <DeskPanel desk={desk} busy={locked} customerId={customerId} onRetry={() => void loadDesk()} onAsk={send} />
         </aside>
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           <details className="shrink-0 border-b border-border lg:hidden">
             <summary className="px-4 py-3 text-sm font-semibold">Profile and orders</summary>
             <div className="max-h-96 overflow-y-auto px-4 pb-3">
-              <DeskPanel desk={desk} busy={busy} customerId={customerId} onRetry={() => void loadDesk()} onAsk={send} compact />
+              <DeskPanel desk={desk} busy={locked} customerId={customerId} onRetry={() => void loadDesk()} onAsk={send} compact />
             </div>
           </details>
           <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-5" role="log" aria-live="polite">
@@ -312,7 +353,7 @@ export function SupportDesk() {
                 <EmptyThread
                   prompts={prompts}
                   desk={desk}
-                  busy={busy}
+                  busy={locked}
                   onAsk={send}
                   onRetry={() => void loadDesk()}
                 />
@@ -345,7 +386,7 @@ export function SupportDesk() {
               Read-aloud isn't available in this browser.
             </p>
           ) : null}
-          <Composer disabled={busy} onSend={send} />
+          <Composer disabled={locked} onSend={send} />
         </main>
       </div>
     </div>

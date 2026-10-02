@@ -21,8 +21,8 @@ class _Phraser:
     def __init__(self) -> None:
         self.names: list[str | None] = []
 
-    def phrase(self, turn, message: str, customer_name: str | None = None) -> None:
-        del turn, message
+    def phrase(self, turn, message: str, customer_name: str | None = None, memory: dict | None = None) -> None:
+        del turn, message, memory
         self.names.append(customer_name)
         return None
 
@@ -85,6 +85,9 @@ def test_profile_lines_are_the_system_prompt_and_the_desk_payload() -> None:
     joined = " ".join(PROFILE_LINES)
     assert "warm, brief" in joined
     assert "bookstore clerk" in joined
+    assert "short sentences and contractions" in joined
+    assert "Do not use labels" in joined
+    assert "do not recite it unless their message brings it up" in joined
     assert "customer's name" in joined
     assert "only facts that appear in the tool JSON" in joined
     assert "Do not invent a book title" in joined
@@ -185,21 +188,19 @@ def test_late_offer_step_is_the_discount_and_other_reasons_are_empathy_only() ->
     assert empathy.step == "Step: empathy only"
 
 
-def test_opening_quotes_a_stored_reason_and_does_not_invent_one() -> None:
+def test_opening_welcomes_them_and_does_not_quote_the_reason() -> None:
     reason = "came in too late. i was trying to gift it"
-    with_reason = opening_line("A Gentleman in Moscow", reason, "Bob Hale")
-    assert "A Gentleman in Moscow" in with_reason
-    assert reason in with_reason
-    assert with_reason.startswith("Bob, ")
+    with_reason = opening_line("Bob Hale")
+    assert with_reason == "Bob, it's good to see you again."
+    assert reason not in with_reason
+    assert "You said" not in with_reason
+    assert "A Gentleman in Moscow" not in with_reason
 
-    bare = opening_line("The Midnight Library", None, "Becky Alvarez")
-    assert bare == "Becky, last time you returned The Midnight Library."
+    bare = opening_line("Becky Alvarez")
+    assert bare == "Becky, it's good to see you again."
     assert "scary" not in bare.lower()
-    assert "You said" not in bare
-    assert "not scary" not in bare.lower()
-
-    blank = opening_line("The Midnight Library", "   ", "Becky Alvarez")
-    assert blank == bare
+    assert opening_line(None) == "It's good to see you again."
+    assert opening_line("   ") == "It's good to see you again."
 
     store = _DeskStore(
         _orders(),
@@ -208,9 +209,9 @@ def test_opening_quotes_a_stored_reason_and_does_not_invent_one() -> None:
         {"title": "A Gentleman in Moscow", "reason": reason},
     )
     info = ReturnAgent(store, _Phraser()).desk("cust_bob")
-    assert info.opening is not None
-    assert "A Gentleman in Moscow" in info.opening
-    assert reason in info.opening
+    assert info.opening == "Bob, it's good to see you again."
+    assert reason not in info.opening
+    assert "You said" not in info.opening
     assert info.profile == list(PROFILE_LINES)
 
     none_store = _DeskStore(_orders(), "cust_becky", "Becky Alvarez", None)
@@ -226,8 +227,9 @@ def test_opening_quotes_a_stored_reason_and_does_not_invent_one() -> None:
         {"title": "The Midnight Library", "reason": None},
     )
     remembered = ReturnAgent(midnight, _Phraser()).desk("cust_becky")
-    assert remembered.opening == "Becky, last time you returned The Midnight Library."
+    assert remembered.opening == "Becky, it's good to see you again."
     assert "scary" not in remembered.opening.lower()
+    assert "The Midnight Library" not in remembered.opening
 
     started = ReturnAgent(midnight, _Phraser()).reply(
         ChatRequest(message="I want to return a product", customer_id="cust_becky")

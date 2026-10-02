@@ -14,6 +14,7 @@ from bookly_support.agent.eligibility import is_eligible
 from bookly_support.agent.queries import (
     completed_return,
     completed_return_by_id,
+    customer_memory as memory_for_customer,
     get_customer,
     get_order,
     get_payment_method,
@@ -73,6 +74,11 @@ class MongoStore:
             [("customerId", 1), ("orderId", 1)],
             unique=True,
             name="uniq_customer_order_discount",
+        )
+        self._db.memory.create_index(
+            [("customerId", 1)],
+            unique=True,
+            name="uniq_customer_memory",
         )
 
     def close(self) -> None:
@@ -266,7 +272,40 @@ class MongoStore:
             return None
         reason = document.get("reason")
         reason_text = reason.strip() if isinstance(reason, str) and reason.strip() else None
-        return {"title": title, "reason": reason_text}
+        return {
+            "orderId": document.get("orderId"),
+            "title": title,
+            "reason": reason_text,
+            "reasonKind": _optional_text(document.get("reasonKind")),
+            "sentiment": _optional_text(document.get("sentiment")),
+        }
+
+    def customer_memory(self, customer_id: str) -> dict | None:
+        """What this customer told the desk last time, kept across a demo reset."""
+
+        document = self._db.memory.find_one(memory_for_customer(customer_id))
+        if document is None:
+            return None
+        reason = _optional_text(document.get("reason"))
+        title = _optional_text(document.get("title"))
+        if reason is None or title is None:
+            return None
+        order_id = document.get("orderId")
+        return {
+            "customerId": customer_id,
+            "orderId": order_id if isinstance(order_id, str) and order_id.strip() else None,
+            "title": title,
+            "reason": reason,
+            "reasonKind": _optional_text(document.get("reasonKind")),
+            "sentiment": _optional_text(document.get("sentiment")),
+        }
+
+    def reset_demo(self) -> dict[str, int | str]:
+        """Restore returnable orders and clear chats. Memory rows stay."""
+
+        from bookly_support.agent.reset import reset_bookly_demo
+
+        return reset_bookly_demo(self._db)
 
     def count_completed_returns(self, customer_id: str, order_id: str) -> int:
         return self._db.returns.count_documents(completed_return(customer_id, order_id))

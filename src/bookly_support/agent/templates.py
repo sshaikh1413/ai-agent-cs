@@ -16,23 +16,23 @@ def _listed(orders: list[dict]) -> str:
 
 def list_orders(orders: list[dict]) -> str:
     if not orders:
-        return "There is nothing recent to return."
+        return "There's nothing recent to return."
     return (
-        f"I can help you return a recent order. I see {_listed(orders)}. "
+        f"I can help with a return. I've got {_listed(orders)}. "
         "Which one do you want to return?"
     )
 
 
 def week_ambiguous(orders: list[dict]) -> str:
     return (
-        f"I found more than one order from about a week ago: {_listed(orders)}. "
+        f"I've got more than one from about a week ago: {_listed(orders)}. "
         "Which one should I return?"
     )
 
 
 def week_none(orders: list[dict]) -> str:
     if not orders:
-        return "I don't see an order from about a week ago, and there is nothing recent to return."
+        return "I don't see an order from about a week ago, and there's nothing recent to return."
     return (
         "I don't see an order from about a week ago. "
         f"I can return {_listed(orders)}. Which one do you want?"
@@ -52,7 +52,7 @@ def missing_order() -> str:
 
 def ask_reason(order: dict) -> str:
     return (
-        f"I can help return {order['title']}, order {order['orderId']}. "
+        f"Sure, I can return {order['title']}, order {order['orderId']}. "
         "What made you want to send it back?"
     )
 
@@ -164,13 +164,13 @@ def refund_choice(options: dict) -> str:
     original = options["originalPayment"]
     if original.get("available") and original.get("last4"):
         return (
-            f"I can refund {title}, order {order_id}, for {amount} "
-            f"to the {original['brand']} ending {original['last4']}, "
-            f"or as store credit for {amount}. Which do you want?"
+            f"I can put {amount} for {title}, order {order_id}, "
+            f"back on the {original['brand']} ending {original['last4']}, "
+            f"or keep it as store credit. Which do you want?"
         )
     return (
-        f"I can refund {title}, order {order_id}, for {amount} as store credit. "
-        "The card on file is not available."
+        f"I can put {amount} for {title}, order {order_id}, on store credit. "
+        "The card on file isn't available."
     )
 
 
@@ -182,24 +182,24 @@ def completed(receipt: dict) -> str:
         brand = receipt.get("brand") or "card"
         return (
             f"Your return is complete. Receipt {receipt_id} for {title} "
-            f"is {amount} back to the {brand} ending {receipt['last4']}. "
-            "The return receipt is ready to download. "
+            f"is {amount} back on the {brand} ending {receipt['last4']}. "
+            "It's ready to download. "
             "Anything else I can help with?"
         )
     return (
         f"Your return is complete. Receipt {receipt_id} for {title} "
         f"is {amount} in store credit. "
-        "The return receipt is ready to download. "
+        "It's ready to download. "
         "Anything else I can help with?"
     )
 
 
 def not_completed() -> str:
-    return "The return did not complete. I don't have a receipt."
+    return "That return didn't go through. I don't have a receipt."
 
 
 def ask_anything_else() -> str:
-    return "Is there anything else I can help with?"
+    return "Sure. Is there anything else I can help with?"
 
 
 def closed() -> str:
@@ -244,20 +244,15 @@ def order_status_choices(orders: list[dict]) -> str:
 
 
 def no_order_in_progress() -> str:
-    return "I don't see an order that is still being sent."
+    return "I don't see an order that's still on its way."
 
 
-def opening_line(title: str, reason: str | None, customer_name: str | None = None) -> str:
-    """First line of a new conversation. Title, and the stored reason only when one exists."""
+def opening_line(customer_name: str | None = None) -> str:
+    """A welcome. The stored reason stays out of this sentence."""
 
     who = ""
     if isinstance(customer_name, str) and customer_name.strip():
         who = customer_name.strip().split()[0]
     if who:
-        line = f"{who}, last time you returned {title}."
-    else:
-        line = f"Last time you returned {title}."
-    if isinstance(reason, str) and reason.strip():
-        said = " ".join(reason.split())
-        return f"{line} You said: {said}."
-    return line
+        return f"{who}, it's good to see you again."
+    return "It's good to see you again."

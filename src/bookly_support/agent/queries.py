@@ -47,6 +47,12 @@ def get_session(customer_id: str, conversation_id: str) -> dict[str, str]:
     return {"_id": conversation_id, "customerId": customer_id}
 
 
+def customer_memory(customer_id: str) -> dict[str, str]:
+    """The memory row kept for this customer across a demo reset."""
+
+    return {"customerId": customer_id}
+
+
 def goodwill_discount(customer_id: str, order_id: str) -> dict[str, str]:
     return {"customerId": customer_id, "orderId": order_id}
 

@@ -91,6 +91,20 @@ def receipt_pdf(receipt_id: str, customer_id: str | None = None) -> Response:
     )
 
 
+@app.post("/api/demo/reset")
+def demo_reset(request: Request) -> dict[str, int | str]:
+    """Restore the seeded return flow. Does not delete customers, catalog, or orders."""
+
+    del request
+    try:
+        return get_agent().store.reset_demo()
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="The demo didn't reset.",
+        ) from None
+
+
 @app.post("/api/chat", response_model=ChatReply)
 def chat(body: ChatRequest, request: Request) -> ChatReply:
     try:

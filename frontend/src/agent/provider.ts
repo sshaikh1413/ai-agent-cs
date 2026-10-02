@@ -86,6 +86,7 @@ export interface DeskInfo {
 export interface AgentProvider {
   reply(request: AgentRequest, signal?: AbortSignal): Promise<AgentReply>
   desk(customerId?: CustomerId, signal?: AbortSignal): Promise<DeskInfo>
+  resetDemo(signal?: AbortSignal): Promise<void>
 }
 
 export class AgentDeskError extends Error {
@@ -312,6 +313,20 @@ export function createHttpAgentProvider(baseUrl = apiBase()): AgentProvider {
         throw new AgentDeskError("The order list didn't load.")
       }
       return assertDesk(await readJson(response))
+    },
+    async resetDemo(signal) {
+      let response: Response
+      try {
+        response = await fetch(`${baseUrl}/api/demo/reset`, { method: "POST", signal })
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          throw error
+        }
+        throw new AgentDeskError("The demo didn't reset. Try again in a moment.")
+      }
+      if (!response.ok) {
+        throw new AgentDeskError("The demo didn't reset. Try again in a moment.")
+      }
     },
   }
 }
