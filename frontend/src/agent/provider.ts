@@ -61,6 +61,8 @@ export interface AgentReply {
   tools: ToolTrace[]
   conversation_id?: string
   receipt?: ReceiptDownload
+  step: string
+  opening?: string
 }
 
 export interface DeskOrder {
@@ -77,6 +79,8 @@ export interface DeskInfo {
   prompts: string[]
   customer_id: CustomerId
   customer_name: string
+  profile: string[]
+  opening: string | null
 }
 
 export interface AgentProvider {
@@ -149,12 +153,21 @@ function assertReply(value: unknown): AgentReply {
     typeof record.conversation_id === "string" && record.conversation_id.trim()
       ? record.conversation_id
       : undefined
+  if (typeof record.step !== "string" || !record.step.startsWith("Step:")) {
+    throw new AgentDeskError(
+      "Mara's desk sent an unexpected reply. Nothing was filed.",
+    )
+  }
+  const opening =
+    typeof record.opening === "string" && record.opening.trim() ? record.opening : undefined
   return {
     reply: record.reply,
     intent: record.intent as AgentIntent,
     tools: assertTools(record.tools),
     conversation_id,
     receipt: assertReceipt(record.receipt),
+    step: record.step,
+    opening,
   }
 }
 
@@ -236,6 +249,16 @@ function assertDesk(value: unknown): DeskInfo {
   if (typeof record.customer_name !== "string" || !record.customer_name.trim()) {
     throw new AgentDeskError("The order list came back in an unexpected shape.")
   }
+  if (!Array.isArray(record.profile) || record.profile.length === 0) {
+    throw new AgentDeskError("The order list came back in an unexpected shape.")
+  }
+  const profile = record.profile.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+  if (profile.length !== record.profile.length) {
+    throw new AgentDeskError("The order list came back in an unexpected shape.")
+  }
+  if (record.opening != null && typeof record.opening !== "string") {
+    throw new AgentDeskError("The order list came back in an unexpected shape.")
+  }
   return {
     agent_name: record.agent_name,
     can_help: record.can_help.filter((item): item is string => typeof item === "string"),
@@ -243,6 +266,8 @@ function assertDesk(value: unknown): DeskInfo {
     prompts: record.prompts.filter((item): item is string => typeof item === "string"),
     customer_id: record.customer_id,
     customer_name: record.customer_name,
+    profile,
+    opening: typeof record.opening === "string" && record.opening.trim() ? record.opening : null,
   }
 }
 

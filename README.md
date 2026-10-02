@@ -2,6 +2,8 @@
 
 Mara helps a signed-in reader return a book. The desk signs in as Becky Alvarez (`cust_becky`) or Bob Hale (`cust_bob`). Becky is the default. Switching readers starts a new conversation. The model cannot choose the customer.
 
+The sidebar lists Mara's profile in our words: warm, brief, a bookstore clerk, and the fact rules. That same text is the standing system prompt. Claude only phrases the tool JSON. The signed-in customer's name is included in that JSON when the desk has one. Under each reply, the page shows one step from the state machine (`Step: which order`, and the later steps for the reason, the offer, the refund choice, and the receipt). When a conversation starts, Mara's opening quotes that customer's latest completed return: the stored title, and the stored reason text only when the return has one. A return with no reason does not gain one. A customer with no completed return gets no memory line.
+
 The chat is the React desk (typed or spoken English, `en-US`). The API is a FastAPI state machine. It decides which Mongo tool may run. Claude phrases the tool JSON and does not invent a book title, a percent, or a discount code. A fact checker replaces the draft when an order id, receipt id, amount, date, card tail, percent, or title was not in that JSON.
 
 Tools:

@@ -97,6 +97,7 @@ class Turn:
     tools: list[ToolTrace] = field(default_factory=list)
     intent: str = "return_refund"
     required: list[str] = field(default_factory=list)
+    step: str = "Step: which order"
 
     @property
     def payload(self) -> dict:
@@ -128,6 +129,7 @@ class Machine:
                 template=closed(),
                 instruction="They are done. Close the chat in one short English sentence. Do not mention orders, money, dates, or cards.",
                 intent="clarify",
+                step="Step: close",
             )
         if asks_for_recommendation(message):
             return self._recommend(session)
@@ -135,6 +137,7 @@ class Machine:
             template=ask_anything_else(),
             instruction="Ask if they need help with anything else. Do not mention orders, money, dates, or cards.",
             intent="clarify",
+            step="Step: anything else",
         )
 
     def _recommend(self, session: Session) -> Turn:
@@ -169,6 +172,7 @@ class Machine:
                 )
             ],
             required=required,
+            step="Step: offer a non-horror title",
         )
 
     def _identify(self, session: Session, message: str, today: date, now: datetime) -> Turn:
@@ -258,6 +262,7 @@ class Machine:
             ),
             tools=[listed, opened],
             required=[detail["title"], detail["orderId"]],
+            step="Step: why it's coming back",
         )
 
     def _reason(self, session: Session, message: str, today: date, now: datetime) -> Turn:
@@ -266,6 +271,7 @@ class Machine:
                 template=password_refused(),
                 instruction="Say, in English, that this desk can help with a return and cannot reset a password.",
                 intent="out_of_scope",
+                step="Step: why it's coming back",
             )
         if session.order_id is None or not session.title:
             session.phase = "identify_order"
@@ -364,6 +370,7 @@ class Machine:
         offer.template = f"{lead} {offer.template}"
         offer.instruction = f"{instruction} {offer.instruction}"
         offer.required = [*extra_required, *offer.required]
+        offer.step = _offer_step(session, traces)
         return offer
 
     def _choose(self, session: Session, message: str, today: date, now: datetime) -> Turn:
@@ -407,6 +414,7 @@ class Machine:
             ),
             tools=[*prior, offered],
             required=required,
+            step="Step: Visa or store credit",
         )
 
     def _write(self, session: Session, today: date, now: datetime) -> Turn:
@@ -437,6 +445,7 @@ class Machine:
                 template=not_completed(),
                 instruction="The write did not complete. Say that there is no receipt. Do not invent one.",
                 tools=[wrote],
+                step="Step: receipt",
             )
         session.phase = "done"
         session.return_id = result.get("returnId")
@@ -453,6 +462,7 @@ class Machine:
             ),
             tools=[wrote],
             required=required,
+            step="Step: receipt",
         )
 
 
@@ -482,6 +492,18 @@ def _is_week_ask(message: str) -> bool:
     from bookly_support.agent.resolve import mentions_week
 
     return mentions_week(message)
+
+
+def _offer_step(session: Session, traces: list[ToolTrace]) -> str:
+    """The offer on this turn. The refund question stays in the reply, not this line."""
+
+    if any(tool.name == "issue_goodwill_discount" and tool.payload.get("code") for tool in traces):
+        return "Step: 20% on the next purchase"
+    if session.genre == "horror" and any(
+        tool.name == "recommend_book" and tool.payload.get("title") for tool in traces
+    ):
+        return "Step: offer a non-horror title"
+    return "Step: empathy only"
 
 
 def _tone_clause(sentiment: str | None) -> str:

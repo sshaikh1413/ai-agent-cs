@@ -101,6 +101,8 @@ class ChatReply(BaseModel):
     tools: list[ToolTrace] = Field(default_factory=list)
     conversation_id: str | None = None
     receipt: ReceiptDownload | None = None
+    step: str
+    opening: str | None = None
 
 
 class DeskOrder(BaseModel):
@@ -117,6 +119,8 @@ class DeskInfo(BaseModel):
     prompts: list[str]
     customer_id: str
     customer_name: str
+    profile: list[str]
+    opening: str | None = None
 
 
 class AgentProvider(Protocol):

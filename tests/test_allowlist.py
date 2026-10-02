@@ -12,6 +12,7 @@ from bookly_support.agent.queries import (
     get_payment_method,
     get_receipt,
     goodwill_discount,
+    latest_completed_return,
     list_recent_orders,
 )
 from bookly_support.agent.checker import accept_draft
@@ -96,6 +97,10 @@ def test_queries_include_customer_id() -> None:
     assert get_order("cust_becky", "BLY-22018")["customerId"] == "cust_becky"
     assert get_payment_method("cust_becky", "pm_becky_visa")["customerId"] == "cust_becky"
     assert completed_return("cust_becky", "BLY-22018")["customerId"] == "cust_becky"
+    assert latest_completed_return("cust_becky") == {
+        "customerId": "cust_becky",
+        "status": "completed",
+    }
     assert completed_return_by_id("cust_becky", "ret_one") == {
         "_id": "ret_one",
         "customerId": "cust_becky",

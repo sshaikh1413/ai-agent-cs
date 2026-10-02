@@ -21,6 +21,7 @@ from bookly_support.agent.queries import (
     get_receipt,
     get_session,
     goodwill_discount,
+    latest_completed_return,
     list_recent_orders,
 )
 from bookly_support.agent.receipt_pdf import ReceiptFactsError, render_return_receipt
@@ -222,6 +223,22 @@ class MongoStore:
             sentiment=sentiment,
         )
 
+    def latest_completed_return(self, customer_id: str) -> dict | None:
+        """Newest completed return for this customer: stored title, and reason text if any."""
+
+        document = self._db.returns.find_one(
+            latest_completed_return(customer_id),
+            sort=[("createdAt", -1)],
+        )
+        if document is None or document.get("status") != "completed":
+            return None
+        title = self._stored_return_title(customer_id, document)
+        if not title:
+            return None
+        reason = document.get("reason")
+        reason_text = reason.strip() if isinstance(reason, str) and reason.strip() else None
+        return {"title": title, "reason": reason_text}
+
     def count_completed_returns(self, customer_id: str, order_id: str) -> int:
         return self._db.returns.count_documents(completed_return(customer_id, order_id))
 
@@ -303,6 +320,23 @@ class MongoStore:
             "returnWindowDays": int(document["returnWindowDays"]),
             "body": str(document.get("body") or ""),
         }
+
+    def _stored_return_title(self, customer_id: str, document: dict) -> str | None:
+        receipt_id = document.get("receiptId")
+        if isinstance(receipt_id, str) and receipt_id.strip():
+            receipt = self._db.receipts.find_one(get_receipt(customer_id, receipt_id.strip()))
+            if receipt is not None:
+                title = receipt.get("title")
+                if isinstance(title, str) and title.strip():
+                    return title.strip()
+        order_id = document.get("orderId")
+        if isinstance(order_id, str) and order_id.strip():
+            order = self._db.orders.find_one(get_order(customer_id, order_id.strip()))
+            if order is not None:
+                title = _title(order)
+                if title and title != "this book":
+                    return title
+        return None
 
     def _replay(self, customer_id: str, existing: dict) -> dict:
         receipt = self._db.receipts.find_one(get_receipt(customer_id, existing["receiptId"]))

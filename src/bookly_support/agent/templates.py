@@ -163,3 +163,19 @@ def closed() -> str:
 
 def password_refused() -> str:
     return "I can help return a book from this account. I can't reset a password."
+
+
+def opening_line(title: str, reason: str | None, customer_name: str | None = None) -> str:
+    """First line of a new conversation. Title, and the stored reason only when one exists."""
+
+    who = ""
+    if isinstance(customer_name, str) and customer_name.strip():
+        who = customer_name.strip().split()[0]
+    if who:
+        line = f"{who}, last time you returned {title}."
+    else:
+        line = f"Last time you returned {title}."
+    if isinstance(reason, str) and reason.strip():
+        said = " ".join(reason.split())
+        return f"{line} You said: {said}."
+    return line

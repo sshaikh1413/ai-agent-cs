@@ -25,6 +25,12 @@ def completed_return(customer_id: str, order_id: str) -> dict[str, str]:
     return {"customerId": customer_id, "orderId": order_id, "status": "completed"}
 
 
+def latest_completed_return(customer_id: str) -> dict[str, str]:
+    """Completed returns for this customer. The store sorts newest first."""
+
+    return {"customerId": customer_id, "status": "completed"}
+
+
 def completed_return_by_id(customer_id: str, return_id: str) -> dict[str, str]:
     return {"_id": return_id, "customerId": customer_id, "status": "completed"}
 

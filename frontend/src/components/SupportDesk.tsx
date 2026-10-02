@@ -23,6 +23,9 @@ type ThreadItem =
       intent: AgentIntent
       tools: ToolTrace[]
       receipt?: ReceiptDownload
+      step?: string
+      opening?: string
+      memory?: boolean
     }
   | { id: string; kind: "error"; text: string; retryMessage: string }
   | { id: string; kind: "pending" }
@@ -85,6 +88,22 @@ export function SupportDesk() {
       const info = await provider.desk(forCustomer)
       if (deskRequest.current !== requestId || customerIdRef.current !== forCustomer) return
       setDesk({ status: "ready", info })
+      if (info.opening) {
+        setItems((current) =>
+          current.length === 0
+            ? [
+                {
+                  id: `opening-${forCustomer}`,
+                  kind: "assistant",
+                  text: info.opening as string,
+                  intent: "return_refund",
+                  tools: [],
+                  memory: true,
+                },
+              ]
+            : current,
+        )
+      }
     } catch (error) {
       if (deskRequest.current !== requestId || customerIdRef.current !== forCustomer) return
       const message = error instanceof AgentDeskError ? error.message : "The order list didn't load."
@@ -133,10 +152,20 @@ export function SupportDesk() {
         conversation_id: conversationId.current ?? undefined,
         customer_id: customerIdRef.current,
       })
+      const previousId = conversationId.current
+      const hadReply = prior.some((item) => item.kind === "assistant" && !item.memory)
+      const restarted = Boolean(previousId && reply.conversation_id && reply.conversation_id !== previousId)
       if (reply.conversation_id) {
         conversationId.current = reply.conversation_id
         sessionStorage.setItem(conversationKey(customerIdRef.current), reply.conversation_id)
       }
+      const alreadyRemembered = prior.some(
+        (item) =>
+          item.kind === "assistant" &&
+          ((item.memory && item.text === reply.opening) || item.opening === reply.opening),
+      )
+      const opening =
+        reply.opening && ((restarted && hadReply) || !alreadyRemembered) ? reply.opening : undefined
       setItems((current) =>
         current
           .filter((item) => item.id !== pendingId)
@@ -147,6 +176,8 @@ export function SupportDesk() {
             intent: reply.intent,
             tools: reply.tools,
             receipt: reply.receipt,
+            step: reply.step,
+            opening,
           }),
       )
     } catch (error) {
@@ -247,25 +278,44 @@ export function SupportDesk() {
       </header>
 
       <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1">
-        <aside className="hidden w-80 shrink-0 flex-col border-r border-border bg-secondary/50 lg:flex">
+        <aside className="hidden w-96 shrink-0 flex-col border-r border-border bg-secondary/50 lg:flex">
           <DeskPanel desk={desk} busy={busy} customerId={customerId} onRetry={() => void loadDesk()} onAsk={send} />
         </aside>
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           <details className="shrink-0 border-b border-border lg:hidden">
-            <summary className="px-4 py-3 text-sm font-semibold">Recent orders</summary>
-            <div className="max-h-64 overflow-y-auto px-4 pb-3">
+            <summary className="px-4 py-3 text-sm font-semibold">Profile and orders</summary>
+            <div className="max-h-96 overflow-y-auto px-4 pb-3">
               <DeskPanel desk={desk} busy={busy} customerId={customerId} onRetry={() => void loadDesk()} onAsk={send} compact />
             </div>
           </details>
           <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-5" role="log" aria-live="polite">
-            {items.length === 0 ? (
-              <EmptyThread
-                prompts={prompts}
-                desk={desk}
-                busy={busy}
-                onAsk={send}
-                onRetry={() => void loadDesk()}
-              />
+            {items.length === 0 || items.every((item) => item.kind === "assistant" && item.memory) ? (
+              <>
+                {items.length > 0 ? (
+                  <ol className="mx-auto mb-6 flex max-w-3xl flex-col gap-4">
+                    {items.map((item) => (
+                      <li key={item.id}>
+                        {item.kind === "assistant" ? (
+                          <AssistantBubble
+                            item={item}
+                            speaking={speakingId === item.id}
+                            playbackError={playbackErrorId === item.id}
+                            canSpeak={canSpeak}
+                            onSpeak={() => toggleSpeak(item.id, item.text)}
+                          />
+                        ) : null}
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
+                <EmptyThread
+                  prompts={prompts}
+                  desk={desk}
+                  busy={busy}
+                  onAsk={send}
+                  onRetry={() => void loadDesk()}
+                />
+              </>
             ) : (
               <ol className="mx-auto flex max-w-3xl flex-col gap-4">
                 {items.map((item) => (
@@ -321,11 +371,23 @@ function DeskPanel({
       ? desk.info.customer_name
       : READERS.find((reader) => reader.id === customerId)?.name
   const help = desk.status === "ready" ? desk.info.can_help : []
+  const profile = desk.status === "ready" ? desk.info.profile : []
   return (
     <div className={compact ? "" : "flex min-h-0 flex-1 flex-col overflow-y-auto p-4"}>
+      <h2 className="font-serif text-xl">Mara's profile</h2>
+      {desk.status === "loading" ? (
+        <p className="mt-3 text-sm text-muted-foreground">Loading Mara's profile…</p>
+      ) : null}
+      {profile.length > 0 ? (
+        <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+          {profile.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
       {!compact ? (
         <>
-          <h2 className="font-serif text-xl">What Mara can help with</h2>
+          <h2 className="mt-6 font-serif text-xl">What Mara can help with</h2>
           {desk.status === "loading" ? (
             <p className="mt-3 text-sm text-muted-foreground">Loading what this desk can do…</p>
           ) : null}
@@ -338,7 +400,7 @@ function DeskPanel({
           ) : null}
         </>
       ) : null}
-      <h2 className={`font-serif text-xl ${compact ? "" : "mt-6"}`}>Recent orders</h2>
+      <h2 className="mt-6 font-serif text-xl">Recent orders</h2>
       {desk.status === "loading" ? (
         <p className="mt-3 text-sm text-muted-foreground" role="status">
           Loading recent orders…
@@ -487,7 +549,11 @@ function AssistantBubble({
           ))}
         </ul>
       ) : null}
+      {item.opening ? <p className="mb-3 whitespace-pre-wrap">{item.opening}</p> : null}
       <p className="whitespace-pre-wrap">{item.text}</p>
+      {item.step ? (
+        <p className="mt-3 border-t border-border pt-2 text-sm text-muted-foreground">{item.step}</p>
+      ) : null}
       {item.receipt ? (
         <a
           href={item.receipt.url}

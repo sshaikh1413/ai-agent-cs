@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from bookly_support.agent.checker import accept_draft
 from bookly_support.agent.machine import Machine, Session, Turn
-from bookly_support.agent.phrasing import ClaudePhraser
+from bookly_support.agent.phrasing import PROFILE_LINES, ClaudePhraser
 from bookly_support.agent.provider import (
     ChatReply,
     ChatRequest,
@@ -17,6 +17,7 @@ from bookly_support.agent.provider import (
     ToolTrace,
 )
 from bookly_support.agent.store import MongoStore
+from bookly_support.agent.templates import opening_line
 from bookly_support.config import ALLOWED_CUSTOMER_IDS, CUSTOMER_ID
 
 
@@ -58,14 +59,17 @@ class ReturnAgent:
                 "I want to return a product",
                 follow_up,
             ],
+            profile=list(PROFILE_LINES),
+            opening=self._opening(customer_id),
         )
 
     def reply(self, request: ChatRequest) -> ChatReply:
         customer_id = _allow_customer(request.customer_id)
-        session = self._session_for(customer_id, request.conversation_id)
+        session, started = self._session_for(customer_id, request.conversation_id)
         now = datetime.now(timezone.utc)
         turn = self._machine.step(session, request.message, today=now.date(), now=now)
-        text = self._say(turn, request.message)
+        name = _customer_name(self.store.get_customer(customer_id))
+        text = self._say(turn, request.message, name)
         self.store.save_session(_session_doc(session))
         return ChatReply(
             reply=text,
@@ -73,18 +77,32 @@ class ReturnAgent:
             tools=[ToolTrace(name=tool.name, summary=tool.summary) for tool in turn.tools],  # type: ignore[arg-type]
             conversation_id=session.id,
             receipt=receipt_download(turn, customer_id),
+            step=turn.step,
+            opening=self._opening(customer_id) if started else None,
         )
 
-    def _session_for(self, customer_id: str, conversation_id: str | None) -> Session:
+    def _session_for(self, customer_id: str, conversation_id: str | None) -> tuple[Session, bool]:
         if conversation_id:
             document = self.store.load_session(customer_id, conversation_id)
             if document is not None and document.get("phase") != "closed":
-                return _session(document)
+                return _session(document), False
         document = self.store.create_session(customer_id)
-        return _session(document)
+        return _session(document), True
 
-    def _say(self, turn: Turn, message: str) -> str:
-        draft = self.phraser.phrase(turn, message)
+    def _opening(self, customer_id: str) -> str | None:
+        prior = self.store.latest_completed_return(customer_id)
+        if not prior:
+            return None
+        title = prior.get("title")
+        if not isinstance(title, str) or not title.strip():
+            return None
+        reason = prior.get("reason")
+        reason_text = reason.strip() if isinstance(reason, str) and reason.strip() else None
+        name = _customer_name(self.store.get_customer(customer_id))
+        return opening_line(title.strip(), reason_text, name)
+
+    def _say(self, turn: Turn, message: str, customer_name: str | None) -> str:
+        draft = self.phraser.phrase(turn, message, customer_name)
         return accept_draft(draft, turn.template, turn.payload, turn.required)
 
 
@@ -108,6 +126,15 @@ def receipt_download(turn: Turn, customer_id: str) -> ReceiptDownload | None:
             url=f"/api/receipts/{receipt_id}?customer_id={customer_id}",
         )
     return None
+
+
+def _customer_name(customer: dict | None) -> str | None:
+    if not customer:
+        return None
+    name = customer.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return name.strip()
 
 
 def _allow_customer(customer_id: str | None) -> str:
