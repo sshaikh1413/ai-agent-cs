@@ -630,3 +630,73 @@ def test_done_phase_goodbye_closes_and_other_questions_do_not_recommend() -> Non
     assert closed.tools == []
     assert "recommend_book" not in store.calls
     assert session.phase == "closed"
+
+
+def test_thats_the_one_selects_bobs_single_shown_order() -> None:
+    """The old loop asked which order again. One shown order is enough."""
+
+    phrases = (
+        "that's the one",
+        "thats the one",
+        "that one",
+        "yes that one",
+        "yes that's the one",
+    )
+
+    def bob_store() -> FakeStore:
+        return FakeStore(
+            [
+                _order(
+                    "BLY-33010",
+                    "A Gentleman in Moscow",
+                    date(2026, 9, 12),
+                    date(2026, 9, 28),
+                    1800,
+                    "fiction",
+                )
+            ],
+            customer_id="cust_bob",
+        )
+
+    for phrase in phrases:
+        store = bob_store()
+        session = Session(id="conv_bob", customer_id="cust_bob")
+        machine = Machine(store)
+        shown = machine.step(session, "I want to return a product", today=TODAY, now=NOW)
+        assert session.phase == "identify_order"
+        assert session.order_id is None
+        assert "BLY-33010" in shown.template
+        assert "Which one" in shown.template
+
+        picked = machine.step(session, phrase, today=TODAY, now=NOW)
+        assert [tool.name for tool in picked.tools] == ["list_recent_orders", "get_order"]
+        assert session.phase == "ask_reason"
+        assert session.order_id == "BLY-33010"
+        assert "A Gentleman in Moscow" in picked.template
+        assert "What made you want to send it back?" in picked.template
+        assert "Which one" not in picked.template
+        assert "start_return" not in store.calls
+        assert "get_refund_options" not in store.calls
+
+    listed = FakeStore(
+        [
+            _order("BLY-33010", "A Gentleman in Moscow", date(2026, 9, 12), date(2026, 9, 28), 1800),
+            _order("BLY-33011", "Piranesi", date(2026, 9, 20), date(2026, 9, 22), 1600),
+        ],
+        customer_id="cust_bob",
+    )
+    session = Session(id="conv_two", customer_id="cust_bob")
+    machine = Machine(listed)
+    first = machine.step(session, "I want to return a product", today=TODAY, now=NOW)
+    assert "BLY-33010" in first.template
+    assert "BLY-33011" in first.template
+    assert "Which one" in first.template
+    again = machine.step(session, "that's the one", today=TODAY, now=NOW)
+    assert [tool.name for tool in again.tools] == ["list_recent_orders"]
+    assert session.phase == "identify_order"
+    assert session.order_id is None
+    assert "Which one" in again.template
+    assert "BLY-33010" in again.template
+    assert "BLY-33011" in again.template
+    assert "What made you want to send it back?" not in again.template
+    assert "get_order" not in listed.calls

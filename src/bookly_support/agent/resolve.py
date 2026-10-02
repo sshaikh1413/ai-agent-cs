@@ -64,6 +64,18 @@ def mentions_week(text: str) -> bool:
     return any(phrase in lowered for phrase in _WEEK)
 
 
+# Points at the one order already on screen. A list of two or more is not this.
+_CONFIRM_SHOWN = re.compile(
+    r"^(?:yes,?\s+)?(?:that one|that(?:'|’)?s the one)[.!?]*$"
+)
+
+
+def confirms_shown_order(text: str) -> bool:
+    """True for "that's the one" and the close forms of that phrase."""
+
+    return _CONFIRM_SHOWN.fullmatch(_clean(text)) is not None
+
+
 def quoted_order_ids(text: str, orders: list[dict]) -> list[dict]:
     known = {order["orderId"].upper(): order for order in orders}
     found: list[dict] = []
@@ -149,4 +161,6 @@ def resolve_order(text: str, orders: list[dict], today: date) -> tuple[str, list
         return "selected", titles
     if len(titles) > 1:
         return "ambiguous", titles
+    if len(orders) == 1 and confirms_shown_order(text):
+        return "selected", orders
     return "list", orders
