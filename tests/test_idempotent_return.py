@@ -58,6 +58,48 @@ def test_double_submit_returns_the_same_receipt() -> None:
     assert len(repo.receipts) == 1
 
 
+def test_completed_return_without_a_reason_is_not_backfilled() -> None:
+    repo = MemoryReturns()
+    repo.returns["ret_88b425d89d8d"] = {
+        "_id": "ret_88b425d89d8d",
+        "customerId": "cust_becky",
+        "orderId": "BLY-22018",
+        "status": "completed",
+        "receiptId": "rcpt_d38bda5f54f8",
+        "amountCents": 1699,
+        "destination": "original_payment",
+    }
+    repo.receipts["rcpt_d38bda5f54f8"] = {
+        "_id": "rcpt_d38bda5f54f8",
+        "customerId": "cust_becky",
+        "orderId": "BLY-22018",
+        "title": "The Midnight Library",
+        "amountCents": 1699,
+        "destination": "original_payment",
+        "brand": "Visa",
+        "last4": "4242",
+    }
+    result = commit_return(
+        repo,
+        customer_id="cust_becky",
+        order_id="BLY-22018",
+        destination="original_payment",
+        title="The Midnight Library",
+        amount_cents=1699,
+        brand="Visa",
+        last4="4242",
+        now=datetime(2026, 10, 2, tzinfo=timezone.utc),
+        new_ids=lambda: ("ret_new", "rcpt_new"),
+        reason="It arrived late",
+        reason_kind="late_delivery",
+    )
+    assert result["receiptId"] == "rcpt_d38bda5f54f8"
+    stored = repo.returns["ret_88b425d89d8d"]
+    assert "reason" not in stored
+    assert "reasonKind" not in stored
+    assert "ret_new" not in repo.returns
+
+
 def test_duplicate_key_returns_the_existing_receipt() -> None:
     repo = MemoryReturns()
     existing_return = {

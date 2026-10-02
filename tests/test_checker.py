@@ -97,6 +97,18 @@ def test_title_missing_from_the_payload_is_replaced() -> None:
     assert accept_draft(draft, template, grounded, ["Piranesi"]) == template
 
 
+def test_invented_amount_or_receipt_id_is_rejected() -> None:
+    template = completed(RECEIPT["results"][0])
+    draft = (
+        "Your return is complete. Receipt rcpt_invented for The Midnight Library "
+        "is $20.00 back to the Visa ending 4242."
+    )
+    problems = unsupported_facts(draft, RECEIPT)
+    assert any("rcpt_invented" in item for item in problems)
+    assert any("20.00" in item for item in problems)
+    assert accept_draft(draft, template, RECEIPT, ["rcpt_abc123", "16.99", "4242"]) == template
+
+
 def test_templates_are_grounded() -> None:
     offer = refund_choice(OPTIONS["results"][0])
     done = completed(RECEIPT["results"][0])

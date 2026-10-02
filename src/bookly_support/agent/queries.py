@@ -25,6 +25,10 @@ def completed_return(customer_id: str, order_id: str) -> dict[str, str]:
     return {"customerId": customer_id, "orderId": order_id, "status": "completed"}
 
 
+def completed_return_by_id(customer_id: str, return_id: str) -> dict[str, str]:
+    return {"_id": return_id, "customerId": customer_id, "status": "completed"}
+
+
 def get_receipt(customer_id: str, receipt_id: str) -> dict[str, str]:
     return {"_id": receipt_id, "customerId": customer_id}
 

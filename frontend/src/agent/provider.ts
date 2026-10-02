@@ -50,11 +50,17 @@ export interface ToolTrace {
   summary: string
 }
 
+export interface ReceiptDownload {
+  receipt_id: string
+  url: string
+}
+
 export interface AgentReply {
   reply: string
   intent: AgentIntent
   tools: ToolTrace[]
   conversation_id?: string
+  receipt?: ReceiptDownload
 }
 
 export interface DeskOrder {
@@ -148,7 +154,20 @@ function assertReply(value: unknown): AgentReply {
     intent: record.intent as AgentIntent,
     tools: assertTools(record.tools),
     conversation_id,
+    receipt: assertReceipt(record.receipt),
   }
+}
+
+function assertReceipt(value: unknown): ReceiptDownload | undefined {
+  if (value == null) return undefined
+  if (typeof value !== "object") return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.receipt_id !== "string" || typeof record.url !== "string") return undefined
+  if (!/^rcpt_[a-z0-9]+$/.test(record.receipt_id)) return undefined
+  if (!record.url.startsWith("/api/receipts/") || !record.url.includes(record.receipt_id)) {
+    return undefined
+  }
+  return { receipt_id: record.receipt_id, url: record.url }
 }
 
 function assertTools(value: unknown): ToolTrace[] {

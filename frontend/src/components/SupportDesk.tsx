@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { BookOpen, RotateCcw, Volume2, VolumeX } from "lucide-react"
+import { BookOpen, Download, RotateCcw, Volume2, VolumeX } from "lucide-react"
 import { Button } from "@/components/ui/button.tsx"
 import {
   AgentDeskError,
@@ -8,6 +8,7 @@ import {
   type AgentTurn,
   type CustomerId,
   type DeskInfo,
+  type ReceiptDownload,
   type ToolTrace,
 } from "../agent/provider.ts"
 import { speak, speechOutputSupported, stopSpeaking } from "../speech/playback.ts"
@@ -15,7 +16,14 @@ import { Composer } from "./Composer.tsx"
 
 type ThreadItem =
   | { id: string; kind: "user"; text: string }
-  | { id: string; kind: "assistant"; text: string; intent: AgentIntent; tools: ToolTrace[] }
+  | {
+      id: string
+      kind: "assistant"
+      text: string
+      intent: AgentIntent
+      tools: ToolTrace[]
+      receipt?: ReceiptDownload
+    }
   | { id: string; kind: "error"; text: string; retryMessage: string }
   | { id: string; kind: "pending" }
 
@@ -138,6 +146,7 @@ export function SupportDesk() {
             text: reply.reply,
             intent: reply.intent,
             tools: reply.tools,
+            receipt: reply.receipt,
           }),
       )
     } catch (error) {
@@ -395,7 +404,8 @@ function EmptyThread({
       </h1>
       <p className="mt-4 text-base text-muted-foreground">
         Mara asks why the book is coming back, then refunds the card on file or store credit
-        after {first ? `${first} chooses` : "you choose"}. The return is written only after that choice.
+        after {first ? `${first} chooses` : "you choose"}. The return is written only after that
+        choice, and that turn has the PDF receipt.
         {name ? ` Signed in as ${name}.` : ""}
       </p>
       {desk.status === "loading" ? (
@@ -478,6 +488,16 @@ function AssistantBubble({
         </ul>
       ) : null}
       <p className="whitespace-pre-wrap">{item.text}</p>
+      {item.receipt ? (
+        <a
+          href={item.receipt.url}
+          download={`${item.receipt.receipt_id}.pdf`}
+          className="mt-3 inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+        >
+          <Download aria-hidden="true" />
+          Download return receipt
+        </a>
+      ) : null}
       {playbackError ? (
         <p className="mt-2 text-sm text-destructive">Playback didn't start in this browser.</p>
       ) : null}

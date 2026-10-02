@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from bookly_support.agent.checker import accept_draft
 from bookly_support.agent.machine import Machine, Session, Turn
 from bookly_support.agent.phrasing import ClaudePhraser
-from bookly_support.agent.provider import ChatReply, ChatRequest, DeskInfo, DeskOrder, ToolTrace
+from bookly_support.agent.provider import (
+    ChatReply,
+    ChatRequest,
+    DeskInfo,
+    DeskOrder,
+    ReceiptDownload,
+    ToolTrace,
+)
 from bookly_support.agent.store import MongoStore
 from bookly_support.config import ALLOWED_CUSTOMER_IDS, CUSTOMER_ID
 
@@ -35,6 +43,7 @@ class ReturnAgent:
                 f"Returns for {name}, who is already signed in.",
                 "Why the book is coming back, before any refund.",
                 "A refund to the original card or to store credit, after they choose.",
+                "A one-page PDF receipt after the return is written.",
             ],
             sample_orders=[
                 DeskOrder(
@@ -63,6 +72,7 @@ class ReturnAgent:
             intent=turn.intent,  # type: ignore[arg-type]
             tools=[ToolTrace(name=tool.name, summary=tool.summary) for tool in turn.tools],  # type: ignore[arg-type]
             conversation_id=session.id,
+            receipt=receipt_download(turn, customer_id),
         )
 
     def _session_for(self, customer_id: str, conversation_id: str | None) -> Session:
@@ -76,6 +86,28 @@ class ReturnAgent:
     def _say(self, turn: Turn, message: str) -> str:
         draft = self.phraser.phrase(turn, message)
         return accept_draft(draft, turn.template, turn.payload, turn.required)
+
+
+_RECEIPT_ID = re.compile(r"rcpt_[a-z0-9]+")
+
+
+def receipt_download(turn: Turn, customer_id: str) -> ReceiptDownload | None:
+    """Link for the receipt this turn actually wrote. Absent until the return completes."""
+
+    for tool in turn.tools:
+        if tool.name != "start_return":
+            continue
+        payload = tool.payload
+        if payload.get("status") != "completed":
+            continue
+        receipt_id = payload.get("receiptId")
+        if not isinstance(receipt_id, str) or _RECEIPT_ID.fullmatch(receipt_id) is None:
+            continue
+        return ReceiptDownload(
+            receipt_id=receipt_id,
+            url=f"/api/receipts/{receipt_id}?customer_id={customer_id}",
+        )
+    return None
 
 
 def _allow_customer(customer_id: str | None) -> str:

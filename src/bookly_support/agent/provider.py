@@ -88,11 +88,19 @@ class ToolTrace(BaseModel):
     summary: str
 
 
+class ReceiptDownload(BaseModel):
+    """PDF for a return that start_return already completed."""
+
+    receipt_id: str
+    url: str
+
+
 class ChatReply(BaseModel):
     reply: str
     intent: Intent
     tools: list[ToolTrace] = Field(default_factory=list)
     conversation_id: str | None = None
+    receipt: ReceiptDownload | None = None
 
 
 class DeskOrder(BaseModel):

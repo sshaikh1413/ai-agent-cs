@@ -7,6 +7,7 @@ from bookly_support.agent.eligibility import is_eligible
 from bookly_support.agent.machine import Machine, Session
 from bookly_support.agent.queries import (
     completed_return,
+    completed_return_by_id,
     get_order,
     get_payment_method,
     get_receipt,
@@ -14,6 +15,7 @@ from bookly_support.agent.queries import (
     list_recent_orders,
 )
 from bookly_support.agent.recommendations import choose_recommendation
+from bookly_support.agent.return_agent import receipt_download
 from bookly_support.agent.returns import commit_return
 
 TODAY = date(2026, 10, 1)
@@ -92,6 +94,11 @@ def test_queries_include_customer_id() -> None:
     assert get_order("cust_becky", "BLY-22018")["customerId"] == "cust_becky"
     assert get_payment_method("cust_becky", "pm_becky_visa")["customerId"] == "cust_becky"
     assert completed_return("cust_becky", "BLY-22018")["customerId"] == "cust_becky"
+    assert completed_return_by_id("cust_becky", "ret_one") == {
+        "_id": "ret_one",
+        "customerId": "cust_becky",
+        "status": "completed",
+    }
     assert get_receipt("cust_becky", "rcpt_abc")["customerId"] == "cust_becky"
     assert goodwill_discount("cust_bob", "BLY-33010") == {
         "customerId": "cust_bob",
@@ -331,6 +338,33 @@ def test_script_does_not_write_until_she_chooses_the_card() -> None:
     assert fourth.tools == []
     assert session.phase == "closed"
     assert store.calls.count("start_return") == 1
+
+
+def test_reason_is_stored_on_the_return_only_after_it_completes() -> None:
+    store = _becky_store()
+    machine = Machine(store)
+    session = Session(id="conv_reason", customer_id="cust_becky")
+    machine.step(session, "I want to return The Midnight Library", today=TODAY, now=NOW)
+    asked = machine.step(session, "It arrived late", today=TODAY, now=NOW)
+    assert session.reason == "It arrived late"
+    assert session.reason_kind == "late_delivery"
+    assert store.repo.returns == {}
+    assert receipt_download(asked, "cust_becky") is None
+    assert all("reason" not in order and "reasonKind" not in order for order in store.orders)
+
+    done = machine.step(session, "store credit", today=TODAY, now=NOW)
+    assert [tool.name for tool in done.tools] == ["start_return"]
+    stored = next(iter(store.repo.returns.values()))
+    assert stored["status"] == "completed"
+    assert stored["reason"] == "It arrived late"
+    assert stored["reasonKind"] == "late_delivery"
+    assert stored["orderId"] == "BLY-22018"
+    link = receipt_download(done, "cust_becky")
+    assert link is not None
+    assert link.receipt_id == stored["receiptId"] == "rcpt_fixed"
+    assert link.url == "/api/receipts/rcpt_fixed?customer_id=cust_becky"
+    assert "ready to download" in done.template
+    assert all("reason" not in order and "reasonKind" not in order for order in store.orders)
 
 
 def test_two_orders_in_the_same_week_ask_instead_of_choosing() -> None:

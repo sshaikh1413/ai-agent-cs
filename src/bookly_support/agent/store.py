@@ -13,6 +13,7 @@ from bookly_support.agent.discounts import issue_goodwill_discount as commit_dis
 from bookly_support.agent.eligibility import is_eligible
 from bookly_support.agent.queries import (
     completed_return,
+    completed_return_by_id,
     get_customer,
     get_order,
     get_payment_method,
@@ -23,6 +24,7 @@ from bookly_support.agent.queries import (
     list_recent_orders,
     non_horror_catalog,
 )
+from bookly_support.agent.receipt_pdf import ReceiptFactsError, render_return_receipt
 from bookly_support.agent.recommendations import choose_recommendation
 from bookly_support.agent.returns import DuplicateReturn, commit_return
 
@@ -227,6 +229,27 @@ class MongoStore:
         if existing is None:
             return None
         return self._db.receipts.find_one(get_receipt(customer_id, existing["receiptId"]))
+
+    def return_receipt_pdf(self, customer_id: str, receipt_id: str) -> bytes | None:
+        """PDF for a completed return already stored for this customer."""
+
+        receipt = self._db.receipts.find_one(get_receipt(customer_id, receipt_id))
+        if receipt is None or not receipt.get("returnId"):
+            return None
+        return_doc = self._db.returns.find_one(
+            completed_return_by_id(customer_id, receipt["returnId"])
+        )
+        order_id = receipt.get("orderId")
+        if return_doc is None or not isinstance(order_id, str) or not order_id:
+            return None
+        order = self._db.orders.find_one(get_order(customer_id, order_id))
+        customer = self._db.customers.find_one(get_customer(customer_id))
+        if order is None or customer is None:
+            return None
+        try:
+            return render_return_receipt(return_doc, order, customer, receipt)
+        except ReceiptFactsError:
+            return None
 
     def create_session(self, customer_id: str) -> dict:
         document = {

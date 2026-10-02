@@ -396,6 +396,7 @@ class Machine:
             instruction=(
                 "The write returned status completed. Say the return is complete. "
                 "Copy the receipt id, amount, title, and last4 from the JSON. "
+                "Do not invent a download address. "
                 "Then ask if they need anything else."
             ),
             tools=[wrote],

@@ -10,7 +10,9 @@ Tools:
 - `recommend_book`, only while offering empathy for a horror return that was not a late delivery
 - `issue_goodwill_discount`, only when the reason is a late delivery. One 20% code per customer and order
 
-After the order is selected, Mara asks why. A late delivery (including a birthday or a gift) gets an apology and that 20% code. A horror book with any other reason gets an apology and one non-horror catalog title the reader does not already own. Any other reason gets empathy only. Then she asks for the Visa or store credit. `start_return` stores the reason and runs only after that choice. A second call returns the same receipt.
+After the order is selected, Mara asks why. A late delivery (including a birthday or a gift) gets an apology and that 20% code. A horror book with any other reason gets an apology and one non-horror catalog title the reader does not already own. Any other reason gets empathy only. Then she asks for the Visa or store credit. `start_return` stores the reason text and `reasonKind` on the completed return and runs only after that choice. A second call returns the same receipt and does not rewrite a return that is already stored.
+
+When that write completes, the desk shows a download for a one-page PDF. The file is built with fpdf2 from the stored return, the order, and the customer. It is not written by the model, and it does not call a payment processor.
 
 "About a week ago" is a `placedAt` window of 5–9 days. One match is selected. Two matches are a question.
 

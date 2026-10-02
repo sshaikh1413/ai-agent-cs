@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 from bookly_support.agent.phrasing import ClaudePhraser
 from bookly_support.agent.provider import AgentProvider, ChatReply, ChatRequest, DeskInfo
@@ -66,6 +69,26 @@ def desk(request: Request, customer_id: str | None = None) -> DeskInfo:
             status_code=500,
             detail="The order list didn't load.",
         ) from None
+
+
+_RECEIPT_ID = re.compile(r"rcpt_[a-z0-9]+")
+
+
+@app.get("/api/receipts/{receipt_id}")
+def receipt_pdf(receipt_id: str, customer_id: str | None = None) -> Response:
+    if _RECEIPT_ID.fullmatch(receipt_id) is None:
+        raise HTTPException(status_code=404, detail="That receipt isn't on this account.")
+    pdf = get_agent().store.return_receipt_pdf(_customer(customer_id), receipt_id)
+    if pdf is None:
+        raise HTTPException(status_code=404, detail="That receipt isn't on this account.")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{receipt_id}.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.post("/api/chat", response_model=ChatReply)

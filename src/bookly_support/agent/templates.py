@@ -119,11 +119,14 @@ def completed(receipt: dict) -> str:
         return (
             f"Your return is complete. Receipt {receipt_id} for {title} "
             f"is {amount} back to the {brand} ending {receipt['last4']}. "
+            "The return receipt is ready to download. "
             "Anything else I can help with?"
         )
     return (
         f"Your return is complete. Receipt {receipt_id} for {title} "
-        f"is {amount} in store credit. Anything else I can help with?"
+        f"is {amount} in store credit. "
+        "The return receipt is ready to download. "
+        "Anything else I can help with?"
     )
 
 
