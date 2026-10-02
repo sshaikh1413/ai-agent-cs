@@ -10,12 +10,16 @@ TOOL_NAMES = (
     "get_order",
     "get_refund_options",
     "start_return",
+    "recommend_book",
+    "issue_goodwill_discount",
 )
 
 Phase = str
 
 _ALLOWED: dict[str, frozenset[str]] = {
     "identify_order": frozenset({"list_recent_orders", "get_order"}),
+    "ask_reason": frozenset(),
+    "empathy": frozenset({"recommend_book", "issue_goodwill_discount"}),
     "choose_destination": frozenset({"get_refund_options"}),
     "write": frozenset({"start_return"}),
     "done": frozenset(),
@@ -30,14 +34,24 @@ class ToolNotAllowed(Exception):
         super().__init__(f"{tool} is not allowed in {phase}")
 
 
-def allowed_tools(phase: str) -> frozenset[str]:
-    return _ALLOWED.get(phase, frozenset())
+def allowed_tools(phase: str, reason_kind: str | None = None) -> frozenset[str]:
+    """Tools for this phase. The discount also requires a late-delivery reason."""
+
+    tools = set(_ALLOWED.get(phase, frozenset()))
+    if reason_kind != "late_delivery":
+        tools.discard("issue_goodwill_discount")
+    return frozenset(tools)
 
 
 T = TypeVar("T")
 
 
-def run_tool(phase: str, tool: str, call: Callable[[], T]) -> T:
-    if tool not in allowed_tools(phase):
+def run_tool(
+    phase: str,
+    tool: str,
+    call: Callable[[], T],
+    reason_kind: str | None = None,
+) -> T:
+    if tool not in allowed_tools(phase, reason_kind):
         raise ToolNotAllowed(phase, tool)
     return call()

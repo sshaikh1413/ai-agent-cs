@@ -38,6 +38,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     history: list[ChatTurn] = Field(default_factory=list, max_length=40)
     conversation_id: str | None = Field(default=None, max_length=80)
+    customer_id: str | None = Field(default=None, max_length=40)
 
     @field_validator("message")
     @classmethod
@@ -55,12 +56,28 @@ class ChatRequest(BaseModel):
         stripped = value.strip()
         return stripped or None
 
+    @field_validator("customer_id")
+    @classmethod
+    def allowed_customer(cls, value: str | None) -> str | None:
+        from bookly_support.config import ALLOWED_CUSTOMER_IDS
+
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if stripped not in ALLOWED_CUSTOMER_IDS:
+            raise ValueError("customer is not on this desk")
+        return stripped
+
 
 ToolName = Literal[
     "list_recent_orders",
     "get_order",
     "get_refund_options",
     "start_return",
+    "recommend_book",
+    "issue_goodwill_discount",
 ]
 
 
@@ -90,6 +107,8 @@ class DeskInfo(BaseModel):
     can_help: list[str]
     sample_orders: list[DeskOrder]
     prompts: list[str]
+    customer_id: str
+    customer_name: str
 
 
 class AgentProvider(Protocol):
@@ -98,5 +117,5 @@ class AgentProvider(Protocol):
     def reply(self, request: ChatRequest) -> ChatReply:
         """Answer one reader message using the conversation so far."""
 
-    def desk(self) -> DeskInfo:
+    def desk(self, customer_id: str | None = None) -> DeskInfo:
         """Describe what this desk can do and which sample orders it knows."""

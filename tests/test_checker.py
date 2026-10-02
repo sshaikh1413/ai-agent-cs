@@ -57,6 +57,46 @@ def test_ordinary_may_is_not_a_date() -> None:
     assert facts_allowed("I may help with a return.", {"results": []})
 
 
+def test_stray_percent_is_replaced_by_the_template() -> None:
+    payload = {
+        "results": [
+            {
+                "code": "BLY20-ABC12345",
+                "percent": 20,
+                "percentLabel": "20%",
+                "orderId": "BLY-33010",
+                "title": "A Gentleman in Moscow",
+            }
+        ]
+    }
+    template = (
+        "I'm sorry A Gentleman in Moscow arrived late and the gift was missed. "
+        "I can offer 20% off your next purchase with code BLY20-ABC12345."
+    )
+    draft = "Sorry the gift was late. Take 30% off, along with 20% off, code BLY20-ABC12345."
+    assert facts_allowed(template, payload)
+    assert "30%" in "".join(unsupported_facts(draft, payload))
+    assert accept_draft(draft, template, payload, ["20%", "BLY20-ABC12345"]) == template
+
+
+def test_title_missing_from_the_payload_is_replaced() -> None:
+    payload = {"results": [{"title": "Piranesi", "genre": "fantasy"}]}
+    template = "I'm sorry Mexican Gothic was not a good read and was not scary. If you'd like something else, try Piranesi."
+    assert "Mexican Gothic" in "".join(unsupported_facts(template, payload))
+    grounded = {
+        "results": [
+            {"title": "Piranesi", "genre": "fantasy"},
+            {"title": "Mexican Gothic", "orderId": "BLY-22044"},
+        ]
+    }
+    assert facts_allowed(template, grounded)
+    draft = (
+        "I'm sorry Mexican Gothic was not a good read and was not scary. "
+        "Try The Silent Woods instead of Piranesi."
+    )
+    assert accept_draft(draft, template, grounded, ["Piranesi"]) == template
+
+
 def test_templates_are_grounded() -> None:
     offer = refund_choice(OPTIONS["results"][0])
     done = completed(RECEIPT["results"][0])

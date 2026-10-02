@@ -1,17 +1,20 @@
 # Bookly return desk
 
-Mara helps Becky Alvarez return a book. Becky is already signed in as `cust_becky`. There is no login screen.
+Mara helps a signed-in reader return a book. The desk signs in as Becky Alvarez (`cust_becky`) or Bob Hale (`cust_bob`). Becky is the default. Switching readers starts a new conversation. The model cannot choose the customer.
 
-The chat is the React desk (typed or spoken English, `en-US`). The API is a FastAPI state machine. It decides which Mongo tool may run. Claude phrases the tool JSON. A fact checker replaces the draft when an order id, receipt id, amount, date, or card tail was not in that JSON.
+The chat is the React desk (typed or spoken English, `en-US`). The API is a FastAPI state machine. It decides which Mongo tool may run. Claude phrases the tool JSON and does not invent a book title, a percent, or a discount code. A fact checker replaces the draft when an order id, receipt id, amount, date, card tail, percent, or title was not in that JSON.
 
-Tools, each scoped by `customerId`:
+Tools:
 
-- `list_recent_orders`
-- `get_order`
-- `get_refund_options`
-- `start_return`
+- `list_recent_orders`, `get_order`, `get_refund_options`, and `start_return`, each scoped by `customerId`
+- `recommend_book`, only while offering empathy for a horror return that was not a late delivery
+- `issue_goodwill_discount`, only when the reason is a late delivery. One 20% code per customer and order
 
-"About a week ago" is a `placedAt` window of 5–9 days. One match is selected. Two matches are a question. `start_return` runs only after she chooses original payment or store credit, and a second call returns the same receipt.
+After the order is selected, Mara asks why. A late delivery (including a birthday or a gift) gets an apology and that 20% code. A horror book with any other reason gets an apology and one non-horror catalog title the reader does not already own. Any other reason gets empathy only. Then she asks for the Visa or store credit. `start_return` stores the reason and runs only after that choice. A second call returns the same receipt.
+
+"About a week ago" is a `placedAt` window of 5–9 days. One match is selected. Two matches are a question.
+
+`scripts/seed_empathy.py` inserts Becky's in-window horror order, Bob, and the catalog when those documents are missing. It reads `MONGODB_URI` from the environment and does not delete existing documents.
 
 ## Requirements
 

@@ -43,13 +43,31 @@ def test_becky_return_script() -> None:
         picked = second.json()
         names = [tool["name"] for tool in picked["tools"]]
         assert "start_return" not in names
-        assert "get_refund_options" in names
+        assert "get_refund_options" not in names
         assert "Midnight Library" in picked["reply"]
-        assert "4242" in picked["reply"]
-        assert "credit" in picked["reply"].lower()
+        assert "4242" not in picked["reply"]
+        assert agent.store.count_completed_returns("cust_becky", "BLY-22018") == before
+
+        reason = client.post(
+            "/api/chat",
+            json={
+                "message": "changed my mind",
+                "conversation_id": conversation_id,
+            },
+        )
+        assert reason.status_code == 200, reason.text
+        offered = reason.json()
+        offered_names = [tool["name"] for tool in offered["tools"]]
+        assert "get_refund_options" in offered_names
+        assert "recommend_book" not in offered_names
+        assert "issue_goodwill_discount" not in offered_names
+        assert "start_return" not in offered_names
+        assert "Midnight Library" in offered["reply"]
+        assert "4242" in offered["reply"]
+        assert "credit" in offered["reply"].lower()
         assert agent.store.count_completed_returns("cust_becky", "BLY-22018") == before
         if before == 0:
-            assert "rcpt_" not in picked["reply"]
+            assert "rcpt_" not in offered["reply"]
 
         third = client.post(
             "/api/chat",
@@ -79,5 +97,5 @@ def test_becky_return_script() -> None:
         assert session is not None
         assert session["phase"] == "closed"
 
-        assert agent.phraser.calls == 4
+        assert agent.phraser.calls == 5
         assert agent.phraser.errors == []

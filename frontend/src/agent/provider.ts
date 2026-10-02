@@ -28,10 +28,13 @@ export type AgentIntent =
   | "clarify"
   | "out_of_scope"
 
+export type CustomerId = "cust_becky" | "cust_bob"
+
 export interface AgentRequest {
   message: string
   history: AgentTurn[]
   conversation_id?: string
+  customer_id?: CustomerId
 }
 
 export type ToolName =
@@ -39,6 +42,8 @@ export type ToolName =
   | "get_order"
   | "get_refund_options"
   | "start_return"
+  | "recommend_book"
+  | "issue_goodwill_discount"
 
 export interface ToolTrace {
   name: ToolName
@@ -64,11 +69,13 @@ export interface DeskInfo {
   can_help: string[]
   sample_orders: DeskOrder[]
   prompts: string[]
+  customer_id: CustomerId
+  customer_name: string
 }
 
 export interface AgentProvider {
   reply(request: AgentRequest, signal?: AbortSignal): Promise<AgentReply>
-  desk(signal?: AbortSignal): Promise<DeskInfo>
+  desk(customerId?: CustomerId, signal?: AbortSignal): Promise<DeskInfo>
 }
 
 export class AgentDeskError extends Error {
@@ -83,6 +90,8 @@ const TOOLS = new Set<ToolName>([
   "get_order",
   "get_refund_options",
   "start_return",
+  "recommend_book",
+  "issue_goodwill_discount",
 ])
 
 const INTENTS = new Set<AgentIntent>([
@@ -202,11 +211,19 @@ function assertDesk(value: unknown): DeskInfo {
       summary: order.summary,
     })
   }
+  if (record.customer_id !== "cust_becky" && record.customer_id !== "cust_bob") {
+    throw new AgentDeskError("The order list came back in an unexpected shape.")
+  }
+  if (typeof record.customer_name !== "string" || !record.customer_name.trim()) {
+    throw new AgentDeskError("The order list came back in an unexpected shape.")
+  }
   return {
     agent_name: record.agent_name,
     can_help: record.can_help.filter((item): item is string => typeof item === "string"),
     sample_orders,
     prompts: record.prompts.filter((item): item is string => typeof item === "string"),
+    customer_id: record.customer_id,
+    customer_name: record.customer_name,
   }
 }
 
@@ -236,10 +253,11 @@ export function createHttpAgentProvider(baseUrl = apiBase()): AgentProvider {
       }
       return assertReply(await readJson(response))
     },
-    async desk(signal) {
+    async desk(customerId = "cust_becky", signal) {
+      const query = new URLSearchParams({ customer_id: customerId })
       let response: Response
       try {
-        response = await fetch(`${baseUrl}/api/desk`, { signal })
+        response = await fetch(`${baseUrl}/api/desk?${query}`, { signal })
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           throw error

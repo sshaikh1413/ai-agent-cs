@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 
 CUSTOMER_ID = "cust_becky"
+ALLOWED_CUSTOMER_IDS = frozenset({"cust_becky", "cust_bob"})
 POLICY_ID = "return-window"
 MODEL_NAME = "claude-sonnet-5-5"
 PYDANTIC_MODEL = "anthropic:claude-sonnet-5-5"

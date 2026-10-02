@@ -9,7 +9,7 @@ from bookly_support.agent.phrasing import ClaudePhraser
 from bookly_support.agent.provider import AgentProvider, ChatReply, ChatRequest, DeskInfo
 from bookly_support.agent.return_agent import ReturnAgent
 from bookly_support.agent.store import MongoStore
-from bookly_support.config import load_settings
+from bookly_support.config import ALLOWED_CUSTOMER_IDS, CUSTOMER_ID, load_settings
 
 app = FastAPI(title="Bookly support desk", version="0.2.0")
 app.add_middleware(
@@ -46,10 +46,21 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _customer(value: str | None) -> str:
+    if value is None or not value.strip():
+        return CUSTOMER_ID
+    cleaned = value.strip()
+    if cleaned not in ALLOWED_CUSTOMER_IDS:
+        raise HTTPException(status_code=400, detail="That account isn't on this desk.")
+    return cleaned
+
+
 @app.get("/api/desk", response_model=DeskInfo)
-def desk(request: Request) -> DeskInfo:
+def desk(request: Request, customer_id: str | None = None) -> DeskInfo:
     try:
-        return _agent(request).desk()
+        return _agent(request).desk(_customer(customer_id))
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(
             status_code=500,

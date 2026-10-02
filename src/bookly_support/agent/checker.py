@@ -14,6 +14,13 @@ _MONEY = re.compile(
 _ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
 _SLASH_DATE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
 _FOUR_DIGIT = re.compile(r"(?<!\d)(\d{4})(?!\d)")
+_PERCENT = re.compile(r"(?<!\d)(\d{1,3})\s*%")
+_GOODWILL_CODE = re.compile(r"\bBLY20-[A-F0-9]{8}\b", re.IGNORECASE)
+_NAMED_CODE = re.compile(r"\bcode\s+([A-Za-z0-9][A-Za-z0-9-]{3,})\b", re.IGNORECASE)
+_TITLE_PHRASE = re.compile(
+    r"\b([A-Z][A-Za-z'’]+(?:\s+(?:[A-Z][A-Za-z'’]+|a|an|the|of|in|and|for|to|on)){1,10})\b"
+)
+_MID_CAP = re.compile(r"\b([A-Z][a-z]{2,})\b")
 
 _MONTHS = {
     "january": 1,
@@ -72,11 +79,20 @@ _COMPLETION_CLAIM = (
 )
 
 
-def _walk(node: object, cents: set[int], dates: set[date], strings: list[str]) -> None:
+def _walk(
+    node: object,
+    cents: set[int],
+    dates: set[date],
+    strings: list[str],
+    percents: set[int],
+    key: str | None = None,
+) -> None:
     if isinstance(node, bool) or node is None:
         return
     if isinstance(node, int):
         cents.add(node)
+        if key in {"percent", "percentOff"}:
+            percents.add(node)
         return
     if isinstance(node, str):
         strings.append(node)
@@ -85,23 +101,26 @@ def _walk(node: object, cents: set[int], dates: set[date], strings: list[str]) -
             cents.add(int(dollars) * 100 + int(fraction))
         for match in _ISO_DATE.finditer(node):
             dates.add(date(int(match.group(1)), int(match.group(2)), int(match.group(3))))
+        for match in _PERCENT.finditer(node):
+            percents.add(int(match.group(1)))
         return
     if isinstance(node, dict):
-        for value in node.values():
-            _walk(value, cents, dates, strings)
+        for child_key, value in node.items():
+            _walk(value, cents, dates, strings, percents, child_key)
         return
     if isinstance(node, list):
         for value in node:
-            _walk(value, cents, dates, strings)
+            _walk(value, cents, dates, strings, percents)
 
 
-def _payload_facts(payload: object) -> tuple[str, set[int], set[date]]:
+def _payload_facts(payload: object) -> tuple[str, set[int], set[date], set[int]]:
     cents: set[int] = set()
     dates: set[date] = set()
     strings: list[str] = []
-    _walk(payload, cents, dates, strings)
+    percents: set[int] = set()
+    _walk(payload, cents, dates, strings, percents)
     blob = json.dumps(payload, default=str).lower()
-    return blob, cents, dates
+    return blob, cents, dates, percents
 
 
 def _money_cents(match: re.Match[str]) -> int | None:
@@ -141,7 +160,7 @@ def completion_is_grounded(payload: object) -> bool:
 def unsupported_facts(reply: str, payload: object) -> list[str]:
     """Fact strings in the reply that the tool payload does not support."""
 
-    blob, cents, dates = _payload_facts(payload)
+    blob, cents, dates, percents = _payload_facts(payload)
     problems: list[str] = []
 
     for match in _ORDER_ID.finditer(reply):
@@ -186,6 +205,33 @@ def unsupported_facts(reply: str, payload: object) -> list[str]:
         if match.group(1) not in blob:
             problems.append(match.group(1))
 
+    for match in _PERCENT.finditer(reply):
+        if int(match.group(1)) not in percents:
+            problems.append(match.group(0))
+
+    for match in _GOODWILL_CODE.finditer(reply):
+        if match.group(0).lower() not in blob:
+            problems.append(match.group(0))
+
+    for match in _NAMED_CODE.finditer(reply):
+        if match.group(1).lower() not in blob:
+            problems.append(match.group(1))
+
+    for match in _TITLE_PHRASE.finditer(reply):
+        phrase = match.group(1)
+        if any(word.lower() in _MONTHS for word in re.findall(r"[A-Za-z]+", phrase)):
+            continue
+        if phrase.lower() not in blob:
+            problems.append(phrase)
+
+    for match in _MID_CAP.finditer(reply):
+        if _is_sentence_start(reply, match.start()):
+            continue
+        word = match.group(1)
+        if word.lower() in _MONTHS or word.lower() in blob:
+            continue
+        problems.append(word)
+
     lowered = reply.lower()
     if any(phrase in lowered for phrase in _COMPLETION_CLAIM) or (
         "receipt" in lowered and "rcpt_" in lowered
@@ -194,6 +240,11 @@ def unsupported_facts(reply: str, payload: object) -> list[str]:
             problems.append("completion")
 
     return problems
+
+
+def _is_sentence_start(text: str, index: int) -> bool:
+    before = text[:index].rstrip()
+    return before == "" or before[-1] in ".!?"
 
 
 def facts_allowed(reply: str, payload: object) -> bool:

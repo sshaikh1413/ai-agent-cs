@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Protocol
 
 from bookly_support.agent.allowlist import run_tool
+from bookly_support.agent.reasons import classify_reason
 from bookly_support.agent.resolve import (
     destination_choice,
     is_decline,
@@ -15,8 +16,13 @@ from bookly_support.agent.resolve import (
 )
 from bookly_support.agent.templates import (
     ask_anything_else,
+    ask_reason,
     closed,
     completed,
+    empathy_horror,
+    empathy_horror_plain,
+    empathy_late,
+    empathy_other,
     list_orders,
     missing_order,
     not_completed,
@@ -38,6 +44,12 @@ class ReturnStore(Protocol):
     def get_refund_options(self, customer_id: str, order_id: str) -> dict | None:
         """Refund destinations for an order on this account."""
 
+    def recommend_book(self, customer_id: str) -> dict:
+        """One non-horror title this customer does not already own."""
+
+    def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
+        """One 20% code for this customer and order, or the code already stored."""
+
     def start_return(
         self,
         customer_id: str,
@@ -45,6 +57,8 @@ class ReturnStore(Protocol):
         destination: str,
         today: date,
         now: datetime,
+        reason: str | None = None,
+        reason_kind: str | None = None,
     ) -> dict:
         """Write the return, or return the receipt already stored."""
 
@@ -65,6 +79,10 @@ class Session:
     destination: str | None = None
     return_id: str | None = None
     closed_at: datetime | None = None
+    reason: str | None = None
+    reason_kind: str | None = None
+    title: str | None = None
+    genre: str | None = None
 
 
 @dataclass
@@ -91,6 +109,10 @@ class Machine:
             return self._write(session, today, now)
         if session.phase == "choose_destination":
             return self._choose(session, message, today, now)
+        if session.phase == "ask_reason":
+            return self._reason(session, message, today, now)
+        if session.phase == "empathy":
+            return self._empathy_and_offer(session, today, now)
         return self._identify(session, message, today, now)
 
     def _done(self, session: Session, message: str, now: datetime) -> Turn:
@@ -99,12 +121,12 @@ class Machine:
             session.closed_at = now
             return Turn(
                 template=closed(),
-                instruction="She is done. Close the chat in one short English sentence. Do not mention orders, money, dates, or cards.",
+                instruction="They are done. Close the chat in one short English sentence. Do not mention orders, money, dates, or cards.",
                 intent="clarify",
             )
         return Turn(
             template=ask_anything_else(),
-            instruction="Ask if she needs help with anything else. Do not mention orders, money, dates, or cards.",
+            instruction="Ask if they need help with anything else. Do not mention orders, money, dates, or cards.",
             intent="clarify",
         )
 
@@ -131,7 +153,7 @@ class Machine:
         if kind == "week_none":
             return Turn(
                 template=week_none(listed.payload["orders"]),
-                instruction="No order was placed about a week ago. Ask her to pick from the listed orders. Do not say a return has started.",
+                instruction="No order was placed about a week ago. Ask them to pick from the listed orders. Do not say a return has started.",
                 tools=[listed],
                 required=_titles(listed.payload["orders"]),
             )
@@ -139,14 +161,14 @@ class Machine:
             public = [_public_order(order) for order in matches]
             return Turn(
                 template=week_ambiguous(public) if _is_week_ask(message) else list_orders(public),
-                instruction="More than one order matches. Ask which one she wants. Do not say a return has started.",
+                instruction="More than one order matches. Ask which one they want. Do not say a return has started.",
                 tools=[listed],
                 required=_titles(public),
             )
         if kind != "selected":
             return Turn(
                 template=list_orders(listed.payload["orders"]),
-                instruction="She wants to return a product. Name every listed title and order id and ask which one. Do not say a return has started.",
+                instruction="They want to return a product. Name every listed title and order id and ask which one. Do not say a return has started.",
                 tools=[listed],
                 required=_titles(listed.payload["orders"]),
             )
@@ -181,8 +203,117 @@ class Machine:
             )
 
         session.order_id = detail["orderId"]
+        session.title = detail["title"]
+        genre = str(detail.get("genre") or "").strip().lower()
+        session.genre = genre or None
+        session.phase = "ask_reason"
+        return Turn(
+            template=ask_reason({"title": detail["title"], "orderId": detail["orderId"]}),
+            instruction=(
+                "Ask why they want to return this book. "
+                "Do not offer a refund yet. Do not recommend a book. "
+                "Do not mention a percent or a discount code. "
+                "Do not say a return has started."
+            ),
+            tools=[listed, opened],
+            required=[detail["title"], detail["orderId"]],
+        )
+
+    def _reason(self, session: Session, message: str, today: date, now: datetime) -> Turn:
+        if is_password_reset(message):
+            return Turn(
+                template=password_refused(),
+                instruction="Say, in English, that this desk can help with a return and cannot reset a password.",
+                intent="out_of_scope",
+            )
+        if session.order_id is None or not session.title:
+            session.phase = "identify_order"
+            return self._identify(session, message, today, now)
+        session.reason = message.strip()
+        session.reason_kind = classify_reason(session.reason)
+        session.phase = "empathy"
+        return self._empathy_and_offer(session, today, now)
+
+    def _empathy_and_offer(self, session: Session, today: date, now: datetime) -> Turn:
+        del today
+        if session.reason_kind is None and session.reason:
+            session.reason_kind = classify_reason(session.reason)
+        title = session.title or "this book"
+        traces: list[ToolTrace] = []
+        lead = ""
+        instruction = ""
+        extra_required: list[str] = []
+        late = session.reason_kind == "late_delivery"
+        if late:
+            discount = run_tool(
+                "empathy",
+                "issue_goodwill_discount",
+                lambda: self._store.issue_goodwill_discount(
+                    session.customer_id,
+                    session.order_id or "",
+                    now,
+                ),
+                reason_kind=session.reason_kind,
+            )
+            traces.append(
+                ToolTrace(
+                    name="issue_goodwill_discount",
+                    summary=f"Goodwill code {discount.get('code')} for {discount.get('orderId')}.",
+                    payload=discount,
+                )
+            )
+            if discount.get("percentLabel") and discount.get("code"):
+                lead = empathy_late(title, discount)
+                extra_required = ["20%", str(discount["code"])]
+            else:
+                lead = f"I'm sorry {title} arrived late and the gift was missed."
+            instruction = (
+                "Apologize for the delay and the missed gift. "
+                "Copy 20% and the discount code from the JSON. "
+                "Do not recommend a book. Do not invent a percent or a code."
+            )
+        elif session.genre == "horror":
+            recommendation = run_tool(
+                "empathy",
+                "recommend_book",
+                lambda: self._store.recommend_book(session.customer_id),
+                reason_kind=session.reason_kind,
+            )
+            traces.append(
+                ToolTrace(
+                    name="recommend_book",
+                    summary=(
+                        f"Suggested {recommendation['title']}."
+                        if recommendation.get("title")
+                        else "No non-horror title was available."
+                    ),
+                    payload=recommendation,
+                )
+            )
+            if recommendation.get("title"):
+                lead = empathy_horror(title, recommendation)
+                extra_required = [str(recommendation["title"])]
+            else:
+                lead = empathy_horror_plain(title)
+            instruction = (
+                "Apologize that it was not a good read and not scary. "
+                "Recommend only the title in the JSON. "
+                "Do not mention a discount, a percent, or a code. "
+                "Do not invent a book title."
+            )
+        else:
+            lead = empathy_other(title, session.reason or "")
+            instruction = (
+                "Show empathy from the customer's reason and the book title. "
+                "Do not recommend a book. Do not mention a discount, a percent, or a code. "
+                "Do not invent a book title."
+            )
         session.phase = "choose_destination"
-        return self._offer(session, [listed, opened])
+        offer = self._offer(session, traces)
+        offer.template = f"{lead} {offer.template}"
+        offer.instruction = f"{instruction} {offer.instruction}"
+        offer.required = [*extra_required, *offer.required]
+        return offer
 
     def _choose(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         choice = destination_choice(message)
@@ -220,7 +351,7 @@ class Machine:
         return Turn(
             template=refund_choice(options),
             instruction=(
-                "Offer the refund destinations in the JSON. Ask her to choose original payment "
+                "Offer the refund destinations in the JSON. Ask them to choose original payment "
                 "or store credit. Do not say the return is complete or that it has started."
             ),
             tools=[*prior, offered],
@@ -240,6 +371,8 @@ class Machine:
                 session.destination or "",
                 today,
                 now,
+                reason=session.reason,
+                reason_kind=session.reason_kind,
             ),
         )
         wrote = ToolTrace(
@@ -263,7 +396,7 @@ class Machine:
             instruction=(
                 "The write returned status completed. Say the return is complete. "
                 "Copy the receipt id, amount, title, and last4 from the JSON. "
-                "Then ask if she needs anything else."
+                "Then ask if they need anything else."
             ),
             tools=[wrote],
             required=required,

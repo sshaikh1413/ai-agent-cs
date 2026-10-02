@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 
 def _listed(orders: list[dict]) -> str:
     parts = [f"{order['title']}, order {order['orderId']}" for order in orders]
@@ -46,6 +48,49 @@ def outside_window(order: dict) -> str:
 
 def missing_order() -> str:
     return "I can't find that order on this account."
+
+
+def ask_reason(order: dict) -> str:
+    return (
+        f"I can help return {order['title']}, order {order['orderId']}. "
+        "What made you want to send it back?"
+    )
+
+
+def empathy_horror(title: str, recommendation: dict) -> str:
+    return (
+        f"I'm sorry {title} was not a good read and was not scary. "
+        f"If you'd like something else, try {recommendation['title']}."
+    )
+
+
+def empathy_horror_plain(title: str) -> str:
+    return (
+        f"I'm sorry {title} was not a good read and was not scary. "
+        "I don't have another title on the shelf to suggest."
+    )
+
+
+def empathy_late(title: str, discount: dict) -> str:
+    return (
+        f"I'm sorry {title} arrived late and the gift was missed. "
+        f"I can offer {discount['percentLabel']} off your next purchase with code {discount['code']}."
+    )
+
+
+def empathy_other(title: str, reason: str) -> str:
+    return f"I'm sorry {title} didn't work out. {_heard(reason)}"
+
+
+def _heard(reason: str) -> str:
+    words = re.findall(r"[A-Za-z']+", reason or "")
+    text = " ".join(words).strip()
+    if not text:
+        return "I understand why you're sending it back."
+    if len(text) > 140:
+        shortened = text[:140].rsplit(" ", 1)[0]
+        text = shortened or text[:140]
+    return f"I hear you: {text}."
 
 
 def refund_choice(options: dict) -> str:

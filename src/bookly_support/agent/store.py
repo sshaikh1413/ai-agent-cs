@@ -8,6 +8,8 @@ from datetime import date, datetime, timezone
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 
+from bookly_support.agent.discounts import DuplicateDiscount
+from bookly_support.agent.discounts import issue_goodwill_discount as commit_discount
 from bookly_support.agent.eligibility import is_eligible
 from bookly_support.agent.queries import (
     completed_return,
@@ -17,8 +19,11 @@ from bookly_support.agent.queries import (
     get_policy,
     get_receipt,
     get_session,
+    goodwill_discount,
     list_recent_orders,
+    non_horror_catalog,
 )
+from bookly_support.agent.recommendations import choose_recommendation
 from bookly_support.agent.returns import DuplicateReturn, commit_return
 
 RECENT_LIMIT = 10
@@ -60,6 +65,11 @@ class MongoStore:
             unique=True,
             name="uniq_completed_order",
             partialFilterExpression={"status": "completed"},
+        )
+        self._db.discounts.create_index(
+            [("customerId", 1), ("orderId", 1)],
+            unique=True,
+            name="uniq_customer_order_discount",
         )
 
     def close(self) -> None:
@@ -124,6 +134,29 @@ class MongoStore:
             "storeCredit": {"available": True, "refundableCents": cents, "amount": amount},
         }
 
+    def recommend_book(self, customer_id: str) -> dict:
+        owned: list[str] = []
+        for document in self._db.orders.find(list_recent_orders(customer_id)):
+            owned.extend(_line_titles(document))
+        catalog = list(self._db.catalog.find(non_horror_catalog()))
+        chosen = choose_recommendation(owned, catalog)
+        if chosen is None:
+            return {"title": None, "genre": None, "author": None}
+        return chosen
+
+    def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
+        document = self._db.orders.find_one(get_order(customer_id, order_id))
+        if document is None:
+            return {"status": "not_issued", "reason": "missing_order", "orderId": order_id}
+        return commit_discount(
+            _MongoDiscounts(self._db),
+            customer_id=customer_id,
+            order_id=document["_id"],
+            now=now,
+            new_code=_new_discount_code,
+            new_id=_new_discount_id,
+        )
+
     def start_return(
         self,
         customer_id: str,
@@ -131,6 +164,8 @@ class MongoStore:
         destination: str,
         today: date,
         now: datetime,
+        reason: str | None = None,
+        reason_kind: str | None = None,
     ) -> dict:
         existing = self._db.returns.find_one(completed_return(customer_id, order_id))
         if existing is not None:
@@ -180,6 +215,8 @@ class MongoStore:
             last4=safe_last4,
             now=now,
             new_ids=_new_ids,
+            reason=reason,
+            reason_kind=reason_kind,
         )
 
     def count_completed_returns(self, customer_id: str, order_id: str) -> int:
@@ -200,6 +237,10 @@ class MongoStore:
             "destination": None,
             "returnId": None,
             "closedAt": None,
+            "reason": None,
+            "reasonKind": None,
+            "title": None,
+            "genre": None,
         }
         self._db.sessions.insert_one(document)
         return document
@@ -222,6 +263,8 @@ class MongoStore:
             "status": document.get("status"),
             "refundableCents": document.get("refundableCents"),
             "paymentMethodId": document.get("paymentMethodId"),
+            "genre": _genre(document),
+            "deliveredLate": bool(document.get("deliveredLate")),
         }
 
     def _policy(self) -> dict:
@@ -282,3 +325,44 @@ class _MongoReturns:
 
 def _new_ids() -> tuple[str, str]:
     return f"ret_{secrets.token_hex(6)}", f"rcpt_{secrets.token_hex(6)}"
+
+
+def _new_discount_code() -> str:
+    return f"BLY20-{secrets.token_hex(4).upper()}"
+
+
+def _new_discount_id() -> str:
+    return f"disc_{secrets.token_hex(6)}"
+
+
+def _line_titles(document: dict) -> list[str]:
+    return [
+        str(line.get("title")).strip()
+        for line in document.get("lines") or []
+        if isinstance(line.get("title"), str) and str(line.get("title")).strip()
+    ]
+
+
+def _genre(document: dict) -> str:
+    genre = document.get("genre")
+    if isinstance(genre, str) and genre.strip():
+        return genre.strip().lower()
+    for line in document.get("lines") or []:
+        line_genre = line.get("genre")
+        if isinstance(line_genre, str) and line_genre.strip():
+            return line_genre.strip().lower()
+    return ""
+
+
+class _MongoDiscounts:
+    def __init__(self, database) -> None:
+        self._db = database
+
+    def find_discount(self, customer_id: str, order_id: str) -> dict | None:
+        return self._db.discounts.find_one(goodwill_discount(customer_id, order_id))
+
+    def insert_discount(self, document: dict) -> None:
+        try:
+            self._db.discounts.insert_one(document)
+        except DuplicateKeyError:
+            raise DuplicateDiscount from None
