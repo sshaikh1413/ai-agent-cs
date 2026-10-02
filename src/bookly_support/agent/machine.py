@@ -9,6 +9,7 @@ from typing import Protocol
 from bookly_support.agent.allowlist import run_tool
 from bookly_support.agent.reasons import classify_reason
 from bookly_support.agent.resolve import (
+    asked_title,
     asks_for_recommendation,
     book_question,
     destination_choice,
@@ -27,6 +28,7 @@ from bookly_support.agent.templates import (
     empathy_horror_plain,
     empathy_late,
     empathy_other,
+    late_apology,
     list_orders,
     missing_order,
     not_completed,
@@ -54,6 +56,9 @@ class ReturnStore(Protocol):
 
     def lookup_catalog(self, title: str) -> dict:
         """Author and summary for a catalog title, or nulls when there is no row."""
+
+    def match_catalog_title(self, text: str) -> str | None:
+        """The catalog title named in this message, or None."""
 
     def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
         """One 20% code for this customer and order, or the code already stored."""
@@ -104,10 +109,16 @@ class Turn:
     intent: str = "return_refund"
     required: list[str] = field(default_factory=list)
     step: str = "Step: which order"
+    customer_reason: str | None = None
 
     @property
     def payload(self) -> dict:
-        return {"results": [tool.payload for tool in self.tools]}
+        """Tool facts for phrasing. A late delivery also includes the reason they typed."""
+
+        body: dict = {"results": [tool.payload for tool in self.tools]}
+        if isinstance(self.customer_reason, str):
+            body["reason"] = self.customer_reason.strip()
+        return body
 
 
 class Machine:
@@ -116,7 +127,7 @@ class Machine:
 
     def step(self, session: Session, message: str, *, today: date, now: datetime) -> Turn:
         kind = book_question(message)
-        subject = _book_in_play(session)
+        subject = _about_subject(self._store, session, message) if kind else None
         if kind and subject and session.phase != "closed":
             return self._about(session, subject, kind)
         if session.phase == "done":
@@ -325,14 +336,16 @@ class Machine:
                     payload=discount,
                 )
             )
+            reason = session.reason or ""
             if discount.get("percentLabel") and discount.get("code"):
-                lead = empathy_late(title, discount, sentiment)
-                extra_required = ["20%", str(discount["code"])]
+                lead = empathy_late(title, discount, reason, sentiment)
+                extra_required = [str(discount["percentLabel"]), str(discount["code"])]
             else:
-                lead = f"I'm sorry {title} arrived late and the gift was missed."
+                lead = late_apology(title, reason, sentiment)
             instruction = (
                 f"{_tone_clause(sentiment)} "
-                "Apologize for the delay and the missed gift. "
+                "Apologize for what the customer actually said in the reason, plus the late delivery. "
+                "Mention a gift or a birthday only when those words are in the reason. "
                 "Copy 20% and the discount code from the JSON. "
                 "Do not recommend a book. Do not invent a percent or a code."
             )
@@ -384,6 +397,8 @@ class Machine:
         offer.instruction = f"{instruction} {offer.instruction}"
         offer.required = [*extra_required, *offer.required]
         offer.step = _offer_step(session, traces)
+        if late:
+            offer.customer_reason = session.reason or ""
         return offer
 
     def _about(self, session: Session, title: str, kind: str) -> Turn:
@@ -552,6 +567,22 @@ def _is_week_ask(message: str) -> bool:
     from bookly_support.agent.resolve import mentions_week
 
     return mentions_week(message)
+
+
+def _about_subject(store: ReturnStore, session: Session, message: str) -> str | None:
+    """The title to look up. A named catalog title wins, then any other named title.
+
+    A title they named that is not stocked is still returned, so the reply can
+    say it is not on file. With no title in the question, use the book in play.
+    """
+
+    named = store.match_catalog_title(message)
+    if isinstance(named, str) and named.strip():
+        return named.strip()
+    phrase = asked_title(message)
+    if phrase:
+        return phrase
+    return _book_in_play(session)
 
 
 def _book_in_play(session: Session) -> str | None:

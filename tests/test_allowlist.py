@@ -15,8 +15,9 @@ from bookly_support.agent.queries import (
     latest_completed_return,
     list_recent_orders,
 )
-from bookly_support.agent.checker import accept_draft
+from bookly_support.agent.checker import accept_draft, unsupported_facts
 from bookly_support.agent.recommendations import choose_recommendation
+from bookly_support.agent.resolve import longest_catalog_title
 from bookly_support.agent.return_agent import receipt_download
 from bookly_support.agent.sentiment import label_sentiment
 from bookly_support.agent.returns import commit_return
@@ -244,6 +245,10 @@ class FakeStore:
                 "summary": summary.strip() if isinstance(summary, str) and summary.strip() else None,
             }
         return {"title": title.strip(), "author": None, "summary": None}
+
+    def match_catalog_title(self, text: str) -> str | None:
+        titles = [str(book.get("title") or "") for book in self.catalog]
+        return longest_catalog_title(text, titles)
 
     def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
         assert customer_id == self.customer_id
@@ -505,8 +510,11 @@ def test_late_delivery_issues_one_code_and_a_second_call_matches() -> None:
     assert code == "BLY20-ABC12345"
     assert "20%" in turn.template
     assert code in turn.template
+    assert "20%" in turn.required
+    assert code in turn.required
     assert "Piranesi" not in turn.template
-    assert "missed" in turn.template
+    assert "birthday" in turn.template.lower()
+    assert "gift" in turn.template.lower()
     assert session.reason_kind == "late_delivery"
 
     again = store.issue_goodwill_discount("cust_bob", "BLY-33010", NOW)
@@ -550,6 +558,59 @@ def test_changed_my_mind_on_a_non_horror_book_does_neither() -> None:
     assert session.reason == "changed my mind"
     assert session.reason_kind == "other"
     assert session.sentiment == "neutral"
+
+
+def _bob_late_turn(reason: str):
+    store = FakeStore(
+        [_order("BLY-33010", "A Gentleman in Moscow", date(2026, 9, 12), date(2026, 9, 28), 1800, "fiction")],
+        customer_id="cust_bob",
+        catalog=_CATALOG,
+    )
+    session = Session(id="conv_bob_reason", customer_id="cust_bob")
+    machine = Machine(store)
+    machine.step(session, "I want to return A Gentleman in Moscow", today=TODAY, now=NOW)
+    turn = machine.step(session, reason, today=TODAY, now=NOW)
+    return turn
+
+
+def test_late_apology_follows_the_reason_and_rejects_an_invented_gift() -> None:
+    bob = "dont need it anymore. delivery too late"
+    turn = _bob_late_turn(bob)
+    code = turn.tools[0].payload["code"]
+    assert turn.payload["reason"] == bob
+    assert "20%" in turn.template
+    assert code in turn.template
+    assert "20%" in turn.required
+    assert code in turn.required
+    assert "arrived late" in turn.template
+    assert "dont need it anymore" in turn.template
+    assert "delivery too late" in turn.template
+    assert "gift" not in turn.template.lower()
+    assert "birthday" not in turn.template.lower()
+    assert "missed gift" not in turn.instruction.lower()
+    assert "actually said" in turn.instruction
+    drafted = turn.template.replace("arrived late", "arrived late and the gift was missed", 1)
+    assert "gift" in drafted.lower()
+    assert "gift" in "".join(unsupported_facts(drafted, turn.payload)).lower()
+    accepted = accept_draft(drafted, turn.template, turn.payload, turn.required)
+    assert accepted == turn.template
+    assert "gift" not in accepted.lower()
+
+    birthday = _bob_late_turn("It was a birthday gift and it arrived late")
+    birthday_code = birthday.tools[0].payload["code"]
+    assert "gift" in birthday.template.lower()
+    assert "birthday" in birthday.template.lower()
+    assert "20%" in birthday.template
+    assert birthday_code in birthday.template
+    assert "20%" in birthday.required
+    assert birthday_code in birthday.required
+    missed = birthday.template.replace(
+        "arrived late",
+        "arrived late and the birthday gift was missed",
+        1,
+    )
+    assert unsupported_facts(missed, birthday.payload) == []
+    assert accept_draft(missed, birthday.template, birthday.payload, birthday.required) == missed
 
 
 def test_negative_late_delivery_still_discounts_and_does_not_recommend() -> None:

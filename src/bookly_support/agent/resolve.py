@@ -59,20 +59,24 @@ def asks_for_recommendation(text: str) -> bool:
     return _RECOMMEND_ASK.search(_clean(text)) is not None
 
 
-_AUTHOR_Q = re.compile(
-    r"\bwho(?:'s|’s| is| was) the author\b|\bwho wrote (?:it|this|that|the book)\b"
-)
-_ABOUT_Q = re.compile(
-    r"\bwhat(?:'s|’s| is| was) (?:it|this|that) about\b"
-    r"|\bwhat(?:'s|’s| is| was) (?:the|this) book about\b"
+_WHAT = r"what(?:['’]?s| is| was)"
+_AUTHOR_Q = re.compile(r"\bauthor\b|\bwho wrote\b")
+_ABOUT_Q = re.compile(rf"\b{_WHAT}\s+\S.+?\s+about\b")
+_WHO_WROTE = re.compile(r"\bwho wrote\s+(.+?)(?:\s+and\b|[?.!]|$)")
+_AUTHOR_OF = re.compile(r"\bauthor of\s+(.+?)(?:\s+and\b|[?.!]|$)")
+_WHAT_ABOUT = re.compile(rf"\b{_WHAT}\s+(.+?)\s+about\b")
+_PRONOUN_TITLE = re.compile(
+    r"^(?:it|this|that|the book|this book|that book|the one|this one|that one)$"
 )
 
 
 def book_question(text: str) -> str | None:
-    """'author', 'summary', or 'both' when they ask about the book in play.
+    """'author', 'summary', or 'both' when they ask who wrote a book or what it is about.
 
-    A recommendation request is not one of these. The machine answers only
-    after they ask, and it does not treat the question as a return reason.
+    A title may be named ("who wrote Becoming", "what's Becoming about") or left
+    as a pronoun. "author" alone counts. A recommendation request does not.
+    The machine answers only after they ask, and it does not treat the question
+    as a return reason.
     """
 
     lowered = _clean(text)
@@ -85,6 +89,40 @@ def book_question(text: str) -> str | None:
     if summary:
         return "summary"
     return None
+
+
+def asked_title(text: str) -> str | None:
+    """A title named in the question, or None when they mean the book in play.
+
+    Pronouns ("it", "the book") are not a title. The caller looks the words up
+    and, when no catalog row matches, says they are not on file.
+    """
+
+    lowered = _clean(text)
+    found: list[str] = []
+    for pattern in (_WHAT_ABOUT, _WHO_WROTE, _AUTHOR_OF):
+        match = pattern.search(lowered)
+        if match:
+            found.append(match.group(1).strip(" \t\"'.,!?;:"))
+    for candidate in found:
+        if candidate and _PRONOUN_TITLE.fullmatch(candidate) is None:
+            return candidate
+    return None
+
+
+def longest_catalog_title(text: str, titles: list[str]) -> str | None:
+    """The longest catalog title written in the message, with its stored casing."""
+
+    lowered = _clean(text)
+    best: str | None = None
+    for title in titles:
+        name = title.strip()
+        if not name:
+            continue
+        if re.search(rf"(?<!\w){re.escape(name.casefold())}(?!\w)", lowered):
+            if best is None or len(name) > len(best):
+                best = name
+    return best
 
 
 def mentions_week(text: str) -> bool:

@@ -81,9 +81,26 @@ def empathy_horror_plain(title: str, sentiment: str | None = None) -> str:
     )
 
 
-def empathy_late(title: str, discount: dict, sentiment: str | None = None) -> str:
+def late_apology(title: str, reason: str, sentiment: str | None = None) -> str:
+    """Sorry the book was late, using the customer's own words.
+
+    Sentiment changes only the opening. A gift or a birthday is not added here.
+    Those words appear only when they are already in the reason.
+    """
+
+    return f"{_sorry(sentiment)} {title} arrived late. {_heard(reason)}"
+
+
+def empathy_late(
+    title: str,
+    discount: dict,
+    reason: str,
+    sentiment: str | None = None,
+) -> str:
+    """Late-delivery apology plus the percent and code copied from the discount."""
+
     return (
-        f"{_sorry(sentiment)} {title} arrived late and the gift was missed. "
+        f"{late_apology(title, reason, sentiment)} "
         f"I can offer {discount['percentLabel']} off your next purchase with code {discount['code']}."
     )
 

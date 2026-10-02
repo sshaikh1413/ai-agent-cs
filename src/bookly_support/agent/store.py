@@ -26,6 +26,7 @@ from bookly_support.agent.queries import (
 )
 from bookly_support.agent.receipt_pdf import ReceiptFactsError, render_return_receipt
 from bookly_support.agent.recommendations import choose_recommendation
+from bookly_support.agent.resolve import longest_catalog_title
 from bookly_support.agent.returns import DuplicateReturn, commit_return
 
 RECENT_LIMIT = 10
@@ -165,6 +166,14 @@ class MongoStore:
             "author": _optional_text(found.get("author")),
             "summary": _optional_text(found.get("summary")),
         }
+
+    def match_catalog_title(self, text: str) -> str | None:
+        titles: list[str] = []
+        for document in self._db.catalog.find({}, {"title": 1}):
+            name = document.get("title")
+            if isinstance(name, str) and name.strip():
+                titles.append(name.strip())
+        return longest_catalog_title(text, titles)
 
     def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
         document = self._db.orders.find_one(get_order(customer_id, order_id))

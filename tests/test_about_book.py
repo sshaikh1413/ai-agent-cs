@@ -2,12 +2,18 @@
 
 from datetime import date
 
+from bookly_support.agent.checker import accept_draft
 from bookly_support.agent.machine import Machine, Session
 from bookly_support.agent.recommendations import choose_recommendation
+from bookly_support.agent.resolve import book_question
 
 from test_allowlist import NOW, TODAY, FakeStore, _CATALOG, _order
 
 PIRANESI = "A man records the tides in a house of statues."
+BECOMING = (
+    "Michelle Obama recounts Chicago, her law career, "
+    "and the years her family lived in the White House."
+)
 
 
 def _done_session() -> tuple[FakeStore, Session, Machine]:
@@ -114,3 +120,66 @@ def test_missing_catalog_row_does_not_invent_an_author() -> None:
     assert about.template == "I don't have that on file."
     assert about.tools[0].payload["summary"] is None
     assert "island" not in about.template
+
+
+def test_named_title_answers_author_and_what_the_book_is_about() -> None:
+    store, session, machine = _done_session()
+    offered = machine.step(session, "do you recommend any books for me?", today=TODAY, now=NOW)
+    assert offered.template == "Piranesi"
+    assert session.recommended_title == "Piranesi"
+    store.catalog.append(
+        {
+            "title": "Becoming",
+            "genre": "memoir",
+            "author": "Michelle Obama",
+            "summary": BECOMING,
+        }
+    )
+    question = "what's Becoming about and who is the author"
+    assert book_question("author") == "author"
+    assert book_question("who wrote Becoming") == "author"
+    assert book_question("what's Becoming about") == "summary"
+    assert book_question(question) == "both"
+
+    turn = machine.step(session, question, today=TODAY, now=NOW)
+    assert turn.step == "Step: about this book"
+    assert [tool.name for tool in turn.tools] == ["lookup_catalog"]
+    assert turn.tools[0].payload["title"] == "Becoming"
+    assert turn.tools[0].payload["author"] == "Michelle Obama"
+    assert turn.tools[0].payload["summary"] == BECOMING
+    assert turn.template == f"Becoming is by Michelle Obama. {BECOMING}"
+    assert "Piranesi" not in turn.template
+    assert "Susanna Clarke" not in turn.template
+    assert "anything else" not in turn.template.lower()
+    assert session.phase == "done"
+    assert session.recommended_title == "Piranesi"
+    swapped = turn.template.replace("Michelle Obama", "Tara Westover", 1)
+    assert "Tara Westover" in swapped
+    assert accept_draft(swapped, turn.template, turn.payload, turn.required) == turn.template
+
+    wrote = machine.step(session, "who wrote Becoming", today=TODAY, now=NOW)
+    assert wrote.tools[0].payload["title"] == "Becoming"
+    assert wrote.template == "Becoming is by Michelle Obama."
+    assert wrote.template != BECOMING
+
+    about = machine.step(session, "what's Becoming about", today=TODAY, now=NOW)
+    assert about.template == BECOMING
+    assert not about.template.startswith("Becoming is by")
+
+    follow = machine.step(session, "author", today=TODAY, now=NOW)
+    assert follow.tools[0].payload["title"] == "Piranesi"
+    assert follow.template == "Piranesi is by Susanna Clarke."
+
+    missing = machine.step(
+        session,
+        "what's The Invisible Library about and who is the author",
+        today=TODAY,
+        now=NOW,
+    )
+    assert missing.template == "I don't have that on file."
+    assert missing.tools[0].payload["author"] is None
+    assert missing.tools[0].payload["summary"] is None
+    assert "Michelle Obama" not in missing.template
+    assert "Susanna Clarke" not in missing.template
+    assert "Piranesi" not in missing.template
+    assert "White House" not in missing.template

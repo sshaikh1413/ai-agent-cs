@@ -310,6 +310,47 @@ def unsupported_facts(reply: str, payload: object) -> list[str]:
             problems.append("completion")
 
     problems.extend(_ungrounded_author_or_plot(reply, payload, blob))
+    problems.extend(_ungrounded_occasion(reply, payload))
+    return problems
+
+
+_OCCASION_WORD = re.compile(r"\b(gifts?|birthdays?)\b", re.IGNORECASE)
+
+
+def _payload_reason(payload: object) -> str | None:
+    """The customer's reason, when this phrasing payload includes one."""
+
+    if not isinstance(payload, dict) or "reason" not in payload:
+        return None
+    value = payload.get("reason")
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _mentions(text: str, root: str) -> bool:
+    return re.search(rf"\b{root}s?\b", text, re.IGNORECASE) is not None
+
+
+def _ungrounded_occasion(reply: str, payload: object) -> list[str]:
+    """Gift or birthday in a draft when the customer's reason did not say that.
+
+    The check runs only when the phrasing payload carries a reason. A stray
+    percent or code is still rejected by the fact walk above.
+    """
+
+    reason = _payload_reason(payload)
+    if reason is None:
+        return []
+    problems: list[str] = []
+    seen: set[str] = set()
+    for match in _OCCASION_WORD.finditer(reply):
+        token = match.group(1).lower()
+        root = "gift" if token.startswith("gift") else "birthday"
+        if root in seen or _mentions(reason, root):
+            continue
+        seen.add(root)
+        problems.append(match.group(0))
     return problems
 
 

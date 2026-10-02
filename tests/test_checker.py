@@ -79,6 +79,49 @@ def test_stray_percent_is_replaced_by_the_template() -> None:
     assert accept_draft(draft, template, payload, ["20%", "BLY20-ABC12345"]) == template
 
 
+def test_gift_is_rejected_when_the_reason_does_not_say_it() -> None:
+    reason = "dont need it anymore. delivery too late"
+    payload = {
+        "reason": reason,
+        "results": [
+            {
+                "code": "BLY20-ABC12345",
+                "percent": 20,
+                "percentLabel": "20%",
+                "orderId": "BLY-33010",
+                "title": "A Gentleman in Moscow",
+            }
+        ],
+    }
+    template = (
+        "I'm sorry A Gentleman in Moscow arrived late. "
+        "I hear you: dont need it anymore delivery too late. "
+        "I can offer 20% off your next purchase with code BLY20-ABC12345."
+    )
+    draft = (
+        "I'm sorry the gift was missed. "
+        "I can offer 20% off your next purchase with code BLY20-ABC12345."
+    )
+    assert "gift" not in template.lower()
+    assert facts_allowed(template, payload)
+    assert any("gift" in item.lower() for item in unsupported_facts(draft, payload))
+    assert accept_draft(draft, template, payload, ["20%", "BLY20-ABC12345"]) == template
+
+    birthday = {
+        **payload,
+        "reason": "It was a birthday gift and it arrived late",
+    }
+    gift_draft = (
+        "I'm sorry the birthday gift was missed. "
+        "I can offer 20% off your next purchase with code BLY20-ABC12345."
+    )
+    assert facts_allowed(gift_draft, birthday)
+    assert accept_draft(gift_draft, template, birthday, ["20%", "BLY20-ABC12345"]) == gift_draft
+    stray = gift_draft.replace("20%", "30%", 1)
+    assert "30%" in "".join(unsupported_facts(stray, birthday))
+    assert accept_draft(stray, template, birthday, ["20%", "BLY20-ABC12345"]) == template
+
+
 def test_title_missing_from_the_payload_is_replaced() -> None:
     payload = {"results": [{"title": "Piranesi", "genre": "fantasy"}]}
     template = "I'm sorry Mexican Gothic was not a good read and was not scary. If you'd like something else, try Piranesi."
