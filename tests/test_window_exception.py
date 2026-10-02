@@ -6,6 +6,7 @@ from bookly_support.agent.checker import accept_draft, unsupported_facts
 from bookly_support.agent.label_pdf import CARRIER_NAME, render_parcel_label
 from bookly_support.agent.machine import Machine, Session
 from bookly_support.agent.queries import get_label
+from bookly_support.agent.destination import closest_destination, closest_exception_reply
 from bookly_support.agent.resolve import accepts_store_credit_exception
 from bookly_support.agent.return_agent import label_download, receipt_download
 
@@ -164,6 +165,80 @@ def test_old_title_asks_why_and_yes_writes_one_store_credit_exception() -> None:
     assert len(store.repo.returns) == 1
     assert again.tools[0].payload["receiptId"] == done.tools[0].payload["receiptId"]
     assert again.tools[0].payload["trackingNumber"] == stored["trackingNumber"]
+
+
+_ACCEPTS = (
+    "yes",
+    "yeah that'd be great",
+    "yeah that would be great",
+    "that works",
+    "sounds good",
+    "sure",
+    "I'll take it",
+    "I will take it",
+)
+
+
+def test_clear_yes_accepts_the_exception_and_a_no_does_not() -> None:
+    for phrase in _ACCEPTS:
+        assert accepts_store_credit_exception(phrase) is True, phrase
+    assert closest_exception_reply("yeah that'd be great") == "accept"
+    assert closest_exception_reply("yeah that would be great") == "accept"
+    for phrase in ("no", "never mind", "no thanks"):
+        assert accepts_store_credit_exception(phrase) is False, phrase
+    assert closest_exception_reply("never mind") == "refuse"
+    assert closest_exception_reply("no") == "refuse"
+    assert accepts_store_credit_exception("the weather is nice today") is False
+    assert closest_exception_reply("the weather is nice today") is None
+    assert accepts_store_credit_exception("card is fine") is False
+    assert closest_exception_reply("card is fine") is None
+    assert closest_destination("card is fine") == "original_payment"
+
+
+def test_yeah_thatd_be_great_writes_one_store_credit_exception() -> None:
+    store = _store()
+    machine = Machine(store)
+    session = _session()
+    machine.step(session, "Is it too late to return Piranesi?", today=TODAY, now=NOW)
+    offer = machine.step(session, REASON, today=TODAY, now=NOW)
+    assert session.phase == "exception_offer"
+    assert "15.99" in offer.template
+    assert "start_return" not in store.calls
+
+    for phrase in ("no thanks", "no", "never mind", "the weather is nice today", "card is fine"):
+        held = machine.step(session, phrase, today=TODAY, now=NOW)
+        assert session.phase == "exception_offer", phrase
+        assert session.destination is None, phrase
+        assert "start_return" not in store.calls, phrase
+        assert "store credit" in held.template
+        assert "Visa" not in held.template
+        assert held.step == "Step: store credit exception"
+
+    done = machine.step(session, "yeah that'd be great", today=TODAY, now=NOW)
+    assert store.calls.count("start_return") == 1
+    assert len(store.repo.returns) == 1
+    assert done.step == "Step: receipt and label"
+    assert done.tools[0].payload["destination"] == "store_credit"
+    assert done.tools[0].payload["exception"] is True
+    assert "Visa" not in done.template
+    assert "15.99" in done.template
+    assert "store credit" in done.template
+    assert done.tools[0].payload["receiptId"] in done.template
+    assert "parcel label" in done.template
+    receipt = receipt_download(done, "cust_becky")
+    label = label_download(done, "cust_becky")
+    assert receipt is not None and receipt.receipt_id == "rcpt_fixed"
+    assert label is not None
+    stored = next(iter(store.repo.returns.values()))
+    assert stored["destination"] == "store_credit"
+    assert stored["exception"] is True
+
+    again = machine.step(session, "yeah that'd be great", today=TODAY, now=NOW)
+    assert store.calls.count("start_return") == 2
+    assert len(store.repo.returns) == 1
+    assert again.tools[0].payload["receiptId"] == done.tools[0].payload["receiptId"]
+    assert again.tools[0].payload["destination"] == "store_credit"
+    assert again.tools[0].payload["exception"] is True
 
 
 def test_naming_the_old_book_first_skips_the_list() -> None:

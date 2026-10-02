@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from bookly_support.agent.destination import closest_destination
+from bookly_support.agent.destination import closest_destination, closest_exception_reply
 from bookly_support.agent.window import week_matches
 
 _ORDER_ID = re.compile(r"\bBLY-\d+\b", re.IGNORECASE)
@@ -248,8 +248,9 @@ def wants_return_in_play(text: str) -> bool:
 def accepts_store_credit_exception(text: str) -> bool:
     """Yes to the store-credit exception. A card phrase is not a yes.
 
-    "Card is fine" stays on the offer. It does not select the Visa.
-    "I will take it" does accept the exception once it is on offer.
+    Closed yes phrases stay as they are. "Card is fine" stays on the offer.
+    It does not select the Visa. Any other sentence is embedded against a few
+    acceptance examples and a few refusals. A clear no does not accept.
     """
 
     lowered = _clean(text).replace("\u2019", "'").replace("\u2018", "'").strip(".!")
@@ -262,7 +263,11 @@ def accepts_store_credit_exception(text: str) -> bool:
         return True
     if original and store:
         return False
-    return lowered in _YES
+    if lowered in _YES:
+        return True
+    if closest_destination(lowered) == "original_payment":
+        return False
+    return closest_exception_reply(lowered) == "accept"
 
 
 def named_orders(text: str, orders: list[dict]) -> list[dict]:
