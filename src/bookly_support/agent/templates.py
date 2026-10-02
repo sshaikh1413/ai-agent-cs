@@ -93,12 +93,40 @@ def empathy_other(title: str, reason: str, sentiment: str | None = None) -> str:
 
 
 def recommend_reply(recommendation: dict) -> str:
-    """The one catalog title, or a line that names no book."""
+    """The one catalog title, or a line that names no book.
+
+    The author and the summary stay off this offer. Those are answered only
+    when the customer asks.
+    """
 
     title = recommendation.get("title")
     if not isinstance(title, str) or not title.strip():
         return "I don't have another title on the shelf to suggest."
     return title.strip()
+
+
+def _text(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def about_book(book: dict, kind: str) -> str:
+    """Author, summary, or both, copied from the catalog row.
+
+    A missing row, or a missing field, names no author and no plot.
+    """
+
+    title = _text(book.get("title")) or "this book"
+    author = _text(book.get("author"))
+    summary = _text(book.get("summary"))
+    author_line = f"{title} is by {author}." if author else None
+    if kind == "author":
+        return author_line or "I don't have that on file."
+    if kind == "summary":
+        return summary or "I don't have that on file."
+    parts = [line for line in (author_line, summary) if line]
+    return " ".join(parts) if parts else "I don't have that on file."
 
 
 def _heard(reason: str) -> str:

@@ -160,6 +160,7 @@ def _session(document: dict) -> Session:
         sentiment=document.get("sentiment"),
         title=document.get("title"),
         genre=document.get("genre"),
+        recommended_title=document.get("recommendedTitle"),
     )
 
 
@@ -177,4 +178,5 @@ def _session_doc(session: Session) -> dict:
         "sentiment": session.sentiment,
         "title": session.title,
         "genre": session.genre,
+        "recommendedTitle": session.recommended_title,
     }

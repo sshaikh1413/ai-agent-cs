@@ -109,6 +109,30 @@ def test_invented_amount_or_receipt_id_is_rejected() -> None:
     assert accept_draft(draft, template, RECEIPT, ["rcpt_abc123", "16.99", "4242"]) == template
 
 
+def test_a_different_author_or_plot_is_replaced_by_the_template() -> None:
+    payload = {
+        "results": [
+            {
+                "title": "Piranesi",
+                "author": "Susanna Clarke",
+                "summary": "A man records the tides in a house of statues.",
+            }
+        ]
+    }
+    template = "Piranesi is by Susanna Clarke."
+    assert facts_allowed(template, payload)
+    assert facts_allowed(payload["results"][0]["summary"], payload)
+    wrong_author = "Piranesi is by madeline miller."
+    assert any("madeline miller" in item.lower() for item in unsupported_facts(wrong_author, payload))
+    assert accept_draft(wrong_author, template, payload, []) == template
+    wrong_plot = (
+        "Piranesi is by Susanna Clarke. "
+        "It is about a witch who turns sailors into pigs."
+    )
+    assert any("witch" in item.lower() for item in unsupported_facts(wrong_plot, payload))
+    assert accept_draft(wrong_plot, template, payload, ["Susanna Clarke"]) == template
+
+
 def test_templates_are_grounded() -> None:
     offer = refund_choice(OPTIONS["results"][0])
     done = completed(RECEIPT["results"][0])

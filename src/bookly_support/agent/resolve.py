@@ -59,6 +59,34 @@ def asks_for_recommendation(text: str) -> bool:
     return _RECOMMEND_ASK.search(_clean(text)) is not None
 
 
+_AUTHOR_Q = re.compile(
+    r"\bwho(?:'s|’s| is| was) the author\b|\bwho wrote (?:it|this|that|the book)\b"
+)
+_ABOUT_Q = re.compile(
+    r"\bwhat(?:'s|’s| is| was) (?:it|this|that) about\b"
+    r"|\bwhat(?:'s|’s| is| was) (?:the|this) book about\b"
+)
+
+
+def book_question(text: str) -> str | None:
+    """'author', 'summary', or 'both' when they ask about the book in play.
+
+    A recommendation request is not one of these. The machine answers only
+    after they ask, and it does not treat the question as a return reason.
+    """
+
+    lowered = _clean(text)
+    author = _AUTHOR_Q.search(lowered) is not None
+    summary = _ABOUT_Q.search(lowered) is not None
+    if author and summary:
+        return "both"
+    if author:
+        return "author"
+    if summary:
+        return "summary"
+    return None
+
+
 def mentions_week(text: str) -> bool:
     lowered = _clean(text)
     return any(phrase in lowered for phrase in _WEEK)

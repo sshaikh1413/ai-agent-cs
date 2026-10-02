@@ -34,21 +34,24 @@ def test_only_the_return_tools_exist() -> None:
         "start_return",
         "recommend_book",
         "issue_goodwill_discount",
+        "lookup_catalog",
     )
-    assert allowed_tools("identify_order") == frozenset({"list_recent_orders", "get_order"})
+    assert allowed_tools("identify_order") == frozenset(
+        {"list_recent_orders", "get_order", "lookup_catalog"}
+    )
     assert "start_return" not in allowed_tools("identify_order")
     assert "get_refund_options" not in allowed_tools("identify_order")
     assert "recommend_book" not in allowed_tools("identify_order")
-    assert allowed_tools("ask_reason") == frozenset()
-    assert allowed_tools("empathy") == frozenset({"recommend_book"})
-    assert allowed_tools("empathy", "other") == frozenset({"recommend_book"})
+    assert allowed_tools("ask_reason") == frozenset({"lookup_catalog"})
+    assert allowed_tools("empathy") == frozenset({"recommend_book", "lookup_catalog"})
+    assert allowed_tools("empathy", "other") == frozenset({"recommend_book", "lookup_catalog"})
     assert allowed_tools("empathy", "late_delivery") == frozenset(
-        {"recommend_book", "issue_goodwill_discount"}
+        {"recommend_book", "issue_goodwill_discount", "lookup_catalog"}
     )
     assert "issue_goodwill_discount" not in allowed_tools("write", "late_delivery")
-    assert allowed_tools("choose_destination") == frozenset({"get_refund_options"})
-    assert allowed_tools("write") == frozenset({"start_return"})
-    assert allowed_tools("done") == frozenset({"recommend_book"})
+    assert allowed_tools("choose_destination") == frozenset({"get_refund_options", "lookup_catalog"})
+    assert allowed_tools("write") == frozenset({"start_return", "lookup_catalog"})
+    assert allowed_tools("done") == frozenset({"recommend_book", "lookup_catalog"})
     assert allowed_tools("closed") == frozenset()
 
 
@@ -225,6 +228,22 @@ class FakeStore:
         if chosen is None:
             return {"title": None, "genre": None, "author": None}
         return chosen
+
+    def lookup_catalog(self, title: str) -> dict:
+        self.calls.append("lookup_catalog")
+        wanted = title.strip().casefold()
+        for book in self.catalog:
+            name = str(book.get("title") or "").strip()
+            if name.casefold() != wanted:
+                continue
+            author = book.get("author")
+            summary = book.get("summary")
+            return {
+                "title": name,
+                "author": author.strip() if isinstance(author, str) and author.strip() else None,
+                "summary": summary.strip() if isinstance(summary, str) and summary.strip() else None,
+            }
+        return {"title": title.strip(), "author": None, "summary": None}
 
     def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
         assert customer_id == self.customer_id
@@ -408,10 +427,30 @@ def test_closed_window_does_not_offer_a_refund() -> None:
 
 
 _CATALOG = [
-    {"title": "The Haunting of Hill House", "genre": "horror", "author": "Shirley Jackson"},
-    {"title": "Mexican Gothic", "genre": "horror", "author": "Silvia Moreno-Garcia"},
-    {"title": "Piranesi", "genre": "fantasy", "author": "Susanna Clarke"},
-    {"title": "Project Hail Mary", "genre": "science fiction", "author": "Andy Weir"},
+    {
+        "title": "The Haunting of Hill House",
+        "genre": "horror",
+        "author": "Shirley Jackson",
+        "summary": "Four guests stay in a house that keeps the one who most wants to belong.",
+    },
+    {
+        "title": "Mexican Gothic",
+        "genre": "horror",
+        "author": "Silvia Moreno-Garcia",
+        "summary": "A woman travels to a remote Mexican house and finds the family bound to the walls.",
+    },
+    {
+        "title": "Piranesi",
+        "genre": "fantasy",
+        "author": "Susanna Clarke",
+        "summary": "A man records the tides in a house of statues.",
+    },
+    {
+        "title": "Project Hail Mary",
+        "genre": "science fiction",
+        "author": "Andy Weir",
+        "summary": "A teacher wakes alone on a ship and has to learn why the sun is dimming.",
+    },
 ]
 
 
@@ -433,6 +472,9 @@ def test_horror_path_recommends_a_book_and_skips_the_discount() -> None:
     assert turn.tools[0].payload["title"] == expected["title"]
     assert "not scary" in turn.template
     assert expected["title"] in turn.template
+    stocked = next(book for book in _CATALOG if book["title"] == expected["title"])
+    assert stocked["summary"] not in turn.template
+    assert stocked["author"] not in turn.template
     assert "Thank you for telling me" in turn.template
     assert "20%" not in turn.template
     assert session.phase == "choose_destination"
@@ -576,6 +618,7 @@ def test_done_phase_recommendation_replies_with_only_that_title() -> None:
     assert expected is not None
     assert title == expected["title"]
     assert turn.template == title
+    assert turn.tools[0].payload.get("summary") is None
     for book in _CATALOG:
         if book["title"] != title:
             assert book["title"] not in turn.template

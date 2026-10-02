@@ -146,6 +146,26 @@ class MongoStore:
             return {"title": None, "genre": None, "author": None}
         return chosen
 
+    def lookup_catalog(self, title: str) -> dict:
+        """Author and one-sentence summary for this title, or nulls if it is not stocked."""
+
+        wanted = title.strip().casefold()
+        found: dict | None = None
+        if wanted:
+            for document in self._db.catalog.find({}, {"title": 1, "author": 1, "summary": 1}):
+                name = document.get("title")
+                if isinstance(name, str) and name.strip().casefold() == wanted:
+                    found = document
+                    break
+        if found is None:
+            return {"title": title.strip(), "author": None, "summary": None}
+        stored_title = found.get("title")
+        return {
+            "title": stored_title.strip() if isinstance(stored_title, str) and stored_title.strip() else title.strip(),
+            "author": _optional_text(found.get("author")),
+            "summary": _optional_text(found.get("summary")),
+        }
+
     def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
         document = self._db.orders.find_one(get_order(customer_id, order_id))
         if document is None:
@@ -283,6 +303,7 @@ class MongoStore:
             "sentiment": None,
             "title": None,
             "genre": None,
+            "recommendedTitle": None,
         }
         self._db.sessions.insert_one(document)
         return document
@@ -392,6 +413,12 @@ def _new_discount_code() -> str:
 
 def _new_discount_id() -> str:
     return f"disc_{secrets.token_hex(6)}"
+
+
+def _optional_text(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _line_titles(document: dict) -> list[str]:

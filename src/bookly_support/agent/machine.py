@@ -10,6 +10,7 @@ from bookly_support.agent.allowlist import run_tool
 from bookly_support.agent.reasons import classify_reason
 from bookly_support.agent.resolve import (
     asks_for_recommendation,
+    book_question,
     destination_choice,
     is_decline,
     is_password_reset,
@@ -17,6 +18,7 @@ from bookly_support.agent.resolve import (
 )
 from bookly_support.agent.sentiment import label_sentiment
 from bookly_support.agent.templates import (
+    about_book,
     ask_anything_else,
     ask_reason,
     closed,
@@ -49,6 +51,9 @@ class ReturnStore(Protocol):
 
     def recommend_book(self, customer_id: str, seed: str) -> dict:
         """One non-horror title this customer does not already own."""
+
+    def lookup_catalog(self, title: str) -> dict:
+        """Author and summary for a catalog title, or nulls when there is no row."""
 
     def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
         """One 20% code for this customer and order, or the code already stored."""
@@ -88,6 +93,7 @@ class Session:
     sentiment: str | None = None
     title: str | None = None
     genre: str | None = None
+    recommended_title: str | None = None
 
 
 @dataclass
@@ -109,6 +115,10 @@ class Machine:
         self._store = store
 
     def step(self, session: Session, message: str, *, today: date, now: datetime) -> Turn:
+        kind = book_question(message)
+        subject = _book_in_play(session)
+        if kind and subject and session.phase != "closed":
+            return self._about(session, subject, kind)
         if session.phase == "done":
             return self._done(session, message, now)
         if session.phase == "write":
@@ -148,10 +158,12 @@ class Machine:
             lambda: self._store.recommend_book(session.customer_id, seed),
         )
         title = recommendation.get("title")
+        _remember_recommendation(session, recommendation)
         if isinstance(title, str) and title.strip():
             instruction = (
                 "Reply with only the title in the JSON. "
-                "Do not invent a book title. Do not name any other book."
+                "Do not invent a book title. Do not name any other book. "
+                "Do not add the author or the summary."
             )
             required = [title.strip()]
         else:
@@ -345,6 +357,7 @@ class Machine:
                     payload=recommendation,
                 )
             )
+            _remember_recommendation(session, recommendation)
             if recommendation.get("title"):
                 lead = empathy_horror(title, recommendation, sentiment)
                 extra_required = [str(recommendation["title"])]
@@ -372,6 +385,53 @@ class Machine:
         offer.required = [*extra_required, *offer.required]
         offer.step = _offer_step(session, traces)
         return offer
+
+    def _about(self, session: Session, title: str, kind: str) -> Turn:
+        book = run_tool(
+            session.phase,
+            "lookup_catalog",
+            lambda: self._store.lookup_catalog(title),
+        )
+        author = book.get("author") if isinstance(book.get("author"), str) else None
+        summary = book.get("summary") if isinstance(book.get("summary"), str) else None
+        required: list[str] = []
+        if kind in {"author", "both"} and author and author.strip():
+            required.append(author.strip())
+        if kind in {"summary", "both"} and summary and summary.strip():
+            required.append(summary.strip())
+        if kind == "author":
+            instruction = (
+                "They asked who the author is. Copy the author from the JSON and no one else. "
+                "Do not add the summary. If author is null, say you do not have that. "
+                "Do not invent an author or a plot."
+            )
+        elif kind == "summary":
+            instruction = (
+                "They asked what the book is about. Copy the summary from the JSON. "
+                "Do not paraphrase it and do not add an author. "
+                "If summary is null, say you do not have that. "
+                "Do not invent an author or a plot."
+            )
+        else:
+            instruction = (
+                "They asked for the author and what the book is about. "
+                "Copy the author and the summary from the JSON. "
+                "If either is null, say you do not have that part. "
+                "Do not invent an author or a plot."
+            )
+        return Turn(
+            template=about_book(book, kind),
+            instruction=instruction,
+            tools=[
+                ToolTrace(
+                    name="lookup_catalog",
+                    summary=f"Catalog facts for {book.get('title') or title}.",
+                    payload=book,
+                )
+            ],
+            required=required,
+            step="Step: about this book",
+        )
 
     def _choose(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         choice = destination_choice(message)
@@ -492,6 +552,24 @@ def _is_week_ask(message: str) -> bool:
     from bookly_support.agent.resolve import mentions_week
 
     return mentions_week(message)
+
+
+def _book_in_play(session: Session) -> str | None:
+    """The recommended title after one was offered, otherwise the order title."""
+
+    recommended = session.recommended_title
+    if isinstance(recommended, str) and recommended.strip():
+        return recommended.strip()
+    title = session.title
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    return None
+
+
+def _remember_recommendation(session: Session, recommendation: dict) -> None:
+    title = recommendation.get("title")
+    if isinstance(title, str) and title.strip():
+        session.recommended_title = title.strip()
 
 
 def _offer_step(session: Session, traces: list[ToolTrace]) -> str:

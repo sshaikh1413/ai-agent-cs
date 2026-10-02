@@ -88,68 +88,111 @@ PAYMENTS = {
     }
 }
 
-# Titles and genres only. No book text. These are written into Atlas; the desk
-# does not look them up on the web. Upsert sets title and genre and leaves
-# every other field on an existing row alone.
+# Title, genre, author, and a one-sentence summary written for this desk.
+# Summaries are not publisher blurbs. Upsert fills a missing author and sets
+# the summary. An author already stored is left alone. Genre on an existing
+# row is left alone, so a horror row stays horror.
 CATALOG = {
-    "book_piranesi": {"_id": "book_piranesi", "title": "Piranesi", "genre": "fantasy"},
-    "book_hail_mary": {"_id": "book_hail_mary", "title": "Project Hail Mary", "genre": "science fiction"},
-    "book_cerulean": {"_id": "book_cerulean", "title": "The House in the Cerulean Sea", "genre": "fantasy"},
-    "book_hill_house": {"_id": "book_hill_house", "title": "The Haunting of Hill House", "genre": "horror"},
-    "book_dracula": {"_id": "book_dracula", "title": "Dracula", "genre": "horror"},
-    "book_frankenstein": {"_id": "book_frankenstein", "title": "Frankenstein", "genre": "horror"},
-    "book_the_shining": {"_id": "book_the_shining", "title": "The Shining", "genre": "horror"},
-    "book_carrie": {"_id": "book_carrie", "title": "Carrie", "genre": "horror"},
-    "book_pet_sematary": {"_id": "book_pet_sematary", "title": "Pet Sematary", "genre": "horror"},
-    "book_mexican_gothic": {"_id": "book_mexican_gothic", "title": "Mexican Gothic", "genre": "horror"},
-    "book_midnight_library": {"_id": "book_midnight_library", "title": "The Midnight Library", "genre": "fiction"},
-    "book_circe": {"_id": "book_circe", "title": "Circe", "genre": "fiction"},
-    "book_gentleman": {"_id": "book_gentleman", "title": "A Gentleman in Moscow", "genre": "fiction"},
-    "book_klara": {"_id": "book_klara", "title": "Klara and the Sun", "genre": "fiction"},
-    "book_remains": {"_id": "book_remains", "title": "The Remains of the Day", "genre": "fiction"},
-    "book_beloved": {"_id": "book_beloved", "title": "Beloved", "genre": "fiction"},
-    "book_normal_people": {"_id": "book_normal_people", "title": "Normal People", "genre": "fiction"},
-    "book_night_circus": {"_id": "book_night_circus", "title": "The Night Circus", "genre": "fantasy"},
-    "book_addie": {"_id": "book_addie", "title": "The Invisible Life of Addie LaRue", "genre": "fantasy"},
-    "book_name_of_the_wind": {"_id": "book_name_of_the_wind", "title": "The Name of the Wind", "genre": "fantasy"},
-    "book_dune": {"_id": "book_dune", "title": "Dune", "genre": "science fiction"},
-    "book_left_hand": {"_id": "book_left_hand", "title": "The Left Hand of Darkness", "genre": "science fiction"},
-    "book_station_eleven": {"_id": "book_station_eleven", "title": "Station Eleven", "genre": "science fiction"},
-    "book_the_martian": {"_id": "book_the_martian", "title": "The Martian", "genre": "science fiction"},
-    "book_thursday": {"_id": "book_thursday", "title": "The Thursday Murder Club", "genre": "mystery"},
-    "book_gone_girl": {"_id": "book_gone_girl", "title": "Gone Girl", "genre": "mystery"},
-    "book_silent_patient": {"_id": "book_silent_patient", "title": "The Silent Patient", "genre": "mystery"},
-    "book_and_then": {"_id": "book_and_then", "title": "And Then There Were None", "genre": "mystery"},
-    "book_pride": {"_id": "book_pride", "title": "Pride and Prejudice", "genre": "romance"},
-    "book_evelyn": {"_id": "book_evelyn", "title": "The Seven Husbands of Evelyn Hugo", "genre": "romance"},
-    "book_beach_read": {"_id": "book_beach_read", "title": "Beach Read", "genre": "romance"},
-    "book_red_white": {"_id": "book_red_white", "title": "Red, White & Royal Blue", "genre": "romance"},
-    "book_educated": {"_id": "book_educated", "title": "Educated", "genre": "memoir"},
-    "book_becoming": {"_id": "book_becoming", "title": "Becoming", "genre": "memoir"},
-    "book_born_a_crime": {"_id": "book_born_a_crime", "title": "Born a Crime", "genre": "memoir"},
-    "book_sapiens": {"_id": "book_sapiens", "title": "Sapiens", "genre": "history"},
-    "book_warmth": {"_id": "book_warmth", "title": "The Warmth of Other Suns", "genre": "history"},
-    "book_splendid": {"_id": "book_splendid", "title": "The Splendid and the Vile", "genre": "history"},
-    "book_dragon_tattoo": {"_id": "book_dragon_tattoo", "title": "The Girl with the Dragon Tattoo", "genre": "thriller"},
-    "book_guest_list": {"_id": "book_guest_list", "title": "The Guest List", "genre": "thriller"},
+    "book_piranesi": {"_id": "book_piranesi", "title": "Piranesi", "genre": "fantasy", "author": "Susanna Clarke", "summary": "A man records the tides in a house of statues."},
+    "book_hail_mary": {"_id": "book_hail_mary", "title": "Project Hail Mary", "genre": "science fiction", "author": "Andy Weir", "summary": "A teacher wakes alone on a ship and has to learn why the sun is dimming."},
+    "book_cerulean": {"_id": "book_cerulean", "title": "The House in the Cerulean Sea", "genre": "fantasy", "author": "TJ Klune", "summary": "A caseworker sent to inspect an orphanage of unusual children finds a home he does not want to close."},
+    "book_hill_house": {"_id": "book_hill_house", "title": "The Haunting of Hill House", "genre": "horror", "author": "Shirley Jackson", "summary": "Four guests stay in a house that keeps the one who most wants to belong."},
+    "book_dracula": {"_id": "book_dracula", "title": "Dracula", "genre": "horror", "author": "Bram Stoker", "summary": "A lawyer's visit to a Transylvanian count becomes a chase that follows the count to England."},
+    "book_frankenstein": {"_id": "book_frankenstein", "title": "Frankenstein", "genre": "horror", "author": "Mary Shelley", "summary": "A student builds a living being, refuses him, and is followed for that refusal."},
+    "book_the_shining": {"_id": "book_the_shining", "title": "The Shining", "genre": "horror", "author": "Stephen King", "summary": "A winter caretaker and his family are snowed in at a hotel that wants his temper."},
+    "book_carrie": {"_id": "book_carrie", "title": "Carrie", "genre": "horror", "author": "Stephen King", "summary": "A sheltered teenager's humiliation at a school dance ends in a power she can no longer hold."},
+    "book_pet_sematary": {"_id": "book_pet_sematary", "title": "Pet Sematary", "genre": "horror", "author": "Stephen King", "summary": "A father finds a burial ground that sends the dead back and uses it when grief will not wait."},
+    "book_mexican_gothic": {"_id": "book_mexican_gothic", "title": "Mexican Gothic", "genre": "horror", "author": "Silvia Moreno-Garcia", "summary": "A woman travels to a remote Mexican house and finds the family bound to the walls."},
+    "book_midnight_library": {"_id": "book_midnight_library", "title": "The Midnight Library", "genre": "fiction", "author": "Matt Haig", "summary": "A woman who regrets her life steps into a library of other lives she might have lived."},
+    "book_circe": {"_id": "book_circe", "title": "Circe", "genre": "fiction", "author": "Madeline Miller", "summary": "A nymph exiled to an island learns witchcraft and outlasts the gods who land there."},
+    "book_gentleman": {"_id": "book_gentleman", "title": "A Gentleman in Moscow", "genre": "fiction", "author": "Amor Towles", "summary": "A count under house arrest in a grand hotel builds a whole life inside its rooms."},
+    "book_klara": {"_id": "book_klara", "title": "Klara and the Sun", "genre": "fiction", "author": "Kazuo Ishiguro", "summary": "An artificial friend watches the child she was bought for and tries to understand love as sunlight."},
+    "book_remains": {"_id": "book_remains", "title": "The Remains of the Day", "genre": "fiction", "author": "Kazuo Ishiguro", "summary": "An English butler looks back on a life of perfect service and the feeling he kept refusing."},
+    "book_beloved": {"_id": "book_beloved", "title": "Beloved", "genre": "fiction", "author": "Toni Morrison", "summary": "A formerly enslaved woman in Ohio is visited by the daughter she lost."},
+    "book_normal_people": {"_id": "book_normal_people", "title": "Normal People", "genre": "fiction", "author": "Sally Rooney", "summary": "Two classmates in Ireland keep finding and losing each other from school into their twenties."},
+    "book_night_circus": {"_id": "book_night_circus", "title": "The Night Circus", "genre": "fantasy", "author": "Erin Morgenstern", "summary": "Two young magicians are bound into a contest that neither was told how to finish."},
+    "book_addie": {"_id": "book_addie", "title": "The Invisible Life of Addie LaRue", "genre": "fantasy", "author": "V.E. Schwab", "summary": "A woman cursed to be forgotten spends centuries trying to leave a mark someone will keep."},
+    "book_name_of_the_wind": {"_id": "book_name_of_the_wind", "title": "The Name of the Wind", "genre": "fantasy", "author": "Patrick Rothfuss", "summary": "A gifted young man tells how he went from a traveling troupe to a university of magic."},
+    "book_dune": {"_id": "book_dune", "title": "Dune", "genre": "science fiction", "author": "Frank Herbert", "summary": "An heir dropped onto a desert planet finds that its spice and its people decide an empire."},
+    "book_left_hand": {"_id": "book_left_hand", "title": "The Left Hand of Darkness", "genre": "science fiction", "author": "Ursula K. Le Guin", "summary": "An envoy on a winter planet has to trust someone whose society does not sort people as his does."},
+    "book_station_eleven": {"_id": "book_station_eleven", "title": "Station Eleven", "genre": "science fiction", "author": "Emily St. John Mandel", "summary": "After a flu collapses the world, a traveling theater company carries a story between the settlements that remain."},
+    "book_the_martian": {"_id": "book_the_martian", "title": "The Martian", "genre": "science fiction", "author": "Andy Weir", "summary": "An astronaut left for dead on Mars has to farm, repair, and signal if he wants a ride home."},
+    "book_thursday": {"_id": "book_thursday", "title": "The Thursday Murder Club", "genre": "mystery", "author": "Richard Osman", "summary": "Four friends in a retirement community take on a local killing the police have not solved."},
+    "book_gone_girl": {"_id": "book_gone_girl", "title": "Gone Girl", "genre": "mystery", "author": "Gillian Flynn", "summary": "A husband's missing wife becomes a public story, and the marriage behind it was already a contest."},
+    "book_silent_patient": {"_id": "book_silent_patient", "title": "The Silent Patient", "genre": "mystery", "author": "Alex Michaelides", "summary": "A therapist tries to learn why a painter stopped speaking after she shot her husband."},
+    "book_and_then": {"_id": "book_and_then", "title": "And Then There Were None", "genre": "mystery", "author": "Agatha Christie", "summary": "Ten strangers invited to an island are killed one by one for crimes they thought were buried."},
+    "book_pride": {"_id": "book_pride", "title": "Pride and Prejudice", "genre": "romance", "author": "Jane Austen", "summary": "A sharp-tongued woman and a proud man keep misreading each other until both families force a second look."},
+    "book_evelyn": {"_id": "book_evelyn", "title": "The Seven Husbands of Evelyn Hugo", "genre": "romance", "author": "Taylor Jenkins Reid", "summary": "An aging film star tells a reporter the real story of her marriages and the love she hid."},
+    "book_beach_read": {"_id": "book_beach_read", "title": "Beach Read", "genre": "romance", "author": "Emily Henry", "summary": "Two writers sharing a summer house bet that each can finish the other's kind of book."},
+    "book_red_white": {"_id": "book_red_white", "title": "Red, White & Royal Blue", "genre": "romance", "author": "Casey McQuiston", "summary": "The American president's son and a British prince turn a public rivalry into a romance they have to hide."},
+    "book_educated": {"_id": "book_educated", "title": "Educated", "genre": "memoir", "author": "Tara Westover", "summary": "A woman raised without school in a survivalist family fights her way to a university and a life of her own."},
+    "book_becoming": {"_id": "book_becoming", "title": "Becoming", "genre": "memoir", "author": "Michelle Obama", "summary": "Michelle Obama recounts Chicago, her law career, and the years her family lived in the White House."},
+    "book_born_a_crime": {"_id": "book_born_a_crime", "title": "Born a Crime", "genre": "memoir", "author": "Trevor Noah", "summary": "Trevor Noah tells how growing up mixed-race under apartheid shaped the family stories he still tells."},
+    "book_sapiens": {"_id": "book_sapiens", "title": "Sapiens", "genre": "history", "author": "Yuval Noah Harari", "summary": "A short history of how humans went from foraging bands to empires, money, and shared stories."},
+    "book_warmth": {"_id": "book_warmth", "title": "The Warmth of Other Suns", "genre": "history", "author": "Isabel Wilkerson", "summary": "Three families leave the Jim Crow South and remake their lives in northern and western cities."},
+    "book_splendid": {"_id": "book_splendid", "title": "The Splendid and the Vile", "genre": "history", "author": "Erik Larson", "summary": "London's first year with Churchill is told through the Blitz and the people who stayed through it."},
+    "book_dragon_tattoo": {"_id": "book_dragon_tattoo", "title": "The Girl with the Dragon Tattoo", "genre": "thriller", "author": "Stieg Larsson", "summary": "A disgraced journalist and a hacker investigate an old disappearance inside a powerful family."},
+    "book_guest_list": {"_id": "book_guest_list", "title": "The Guest List", "genre": "thriller", "author": "Lucy Foley", "summary": "A wedding on a remote island becomes a murder, and several guests arrived already carrying a reason."},
 }
 
 
+def _has_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 def _upsert_catalog(collection, documents: dict[str, dict]) -> None:
-    """Set title and genre. Do not delete rows or clear fields already stored."""
+    """Fill author and summary. Keep an author already stored. Do not change genre."""
 
     for document_id, document in documents.items():
-        result = collection.update_one(
-            {"_id": document_id},
-            {"$set": {"title": document["title"], "genre": document["genre"]}},
-            upsert=True,
-        )
+        existing = collection.find_one({"_id": document_id}, {"author": 1})
+        updates = {"title": document["title"], "summary": document["summary"]}
+        if existing is None or not _has_text(existing.get("author")):
+            updates["author"] = document["author"]
+        if existing is None:
+            updates["genre"] = document["genre"]
+        result = collection.update_one({"_id": document_id}, {"$set": updates}, upsert=True)
         if result.upserted_id is not None:
             print(f"inserted {document_id}")
         elif result.modified_count:
             print(f"updated {document_id}")
         else:
             print(f"already present {document_id}")
+
+
+def _ensure_order_titles(database, documents: dict[str, dict]) -> None:
+    """Add a catalog row when an order title is missing, including author and summary."""
+
+    by_title = {document["title"].casefold(): document for document in documents.values()}
+    stocked = {
+        str(document.get("title")).strip().casefold()
+        for document in database.catalog.find({}, {"title": 1})
+        if isinstance(document.get("title"), str) and document["title"].strip()
+    }
+    for order in database.orders.find({}, {"lines.title": 1}):
+        for line in order.get("lines") or []:
+            title = line.get("title")
+            if not isinstance(title, str) or not title.strip():
+                continue
+            if title.strip().casefold() in stocked:
+                continue
+            meta = by_title.get(title.strip().casefold())
+            if meta is None:
+                print(f"order title has no catalog metadata: {title.strip()}")
+                continue
+            database.catalog.update_one(
+                {"_id": meta["_id"]},
+                {
+                    "$set": {
+                        "title": meta["title"],
+                        "author": meta["author"],
+                        "summary": meta["summary"],
+                        "genre": meta["genre"],
+                    }
+                },
+                upsert=True,
+            )
+            stocked.add(meta["title"].casefold())
+            print(f"added order title {meta['_id']}")
 
 
 def _insert_missing(collection, documents: dict[str, dict]) -> None:
@@ -185,6 +228,16 @@ def main() -> None:
     _insert_missing(database.paymentMethods, PAYMENTS)
     _insert_missing(database.orders, ORDERS)
     _upsert_catalog(database.catalog, CATALOG)
+    _ensure_order_titles(database, CATALOG)
+    ready = 0
+    horror = 0
+    for document in database.catalog.find({}, {"title": 1, "genre": 1, "author": 1, "summary": 1}):
+        if str(document.get("genre") or "").strip().casefold() == "horror":
+            horror += 1
+        if _has_text(document.get("author")) and _has_text(document.get("summary")):
+            ready += 1
+    print(f"catalog rows with author and summary: {ready}")
+    print(f"horror rows: {horror}")
     completed_returns = database.returns.count_documents({"orderId": "BLY-22018", "status": "completed"})
     print(f"BLY-22018 completed returns: {completed_returns}")
     print(

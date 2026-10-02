@@ -12,17 +12,18 @@ TOOL_NAMES = (
     "start_return",
     "recommend_book",
     "issue_goodwill_discount",
+    "lookup_catalog",
 )
 
 Phase = str
 
 _ALLOWED: dict[str, frozenset[str]] = {
-    "identify_order": frozenset({"list_recent_orders", "get_order"}),
-    "ask_reason": frozenset(),
-    "empathy": frozenset({"recommend_book", "issue_goodwill_discount"}),
-    "choose_destination": frozenset({"get_refund_options"}),
-    "write": frozenset({"start_return"}),
-    "done": frozenset({"recommend_book"}),
+    "identify_order": frozenset({"list_recent_orders", "get_order", "lookup_catalog"}),
+    "ask_reason": frozenset({"lookup_catalog"}),
+    "empathy": frozenset({"recommend_book", "issue_goodwill_discount", "lookup_catalog"}),
+    "choose_destination": frozenset({"get_refund_options", "lookup_catalog"}),
+    "write": frozenset({"start_return", "lookup_catalog"}),
+    "done": frozenset({"recommend_book", "lookup_catalog"}),
     "closed": frozenset(),
 }
 

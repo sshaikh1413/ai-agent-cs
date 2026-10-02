@@ -64,6 +64,76 @@ _MONTH_WORD = re.compile(
     re.IGNORECASE,
 )
 
+_AUTHOR_CLAIM = re.compile(
+    r"\b(?:written by|the author is|author is|(?:is|was) by)\s+"
+    r"([A-Za-z][A-Za-z'’.-]*(?:\s+[A-Za-z][A-Za-z'’.-]*){0,4})",
+    re.IGNORECASE,
+)
+_PLOT_CLAIM = re.compile(
+    r"\b(?:it is about|it's about|it['’]s about|the book is about|this book is about|"
+    r"the story (?:is|follows)|the plot is|it follows)\s+([^.]{8,})",
+    re.IGNORECASE,
+)
+# Desk words that are not a plot. Used only when the payload carries a summary,
+# so an about-book draft cannot swap in a different sentence.
+_PLOT_STOP = {
+    "a",
+    "an",
+    "the",
+    "of",
+    "in",
+    "and",
+    "for",
+    "to",
+    "on",
+    "is",
+    "by",
+    "it",
+    "its",
+    "this",
+    "that",
+    "book",
+    "books",
+    "author",
+    "about",
+    "i",
+    "don't",
+    "dont",
+    "have",
+    "has",
+    "had",
+    "file",
+    "not",
+    "no",
+    "we",
+    "do",
+    "does",
+    "did",
+    "with",
+    "from",
+    "or",
+    "as",
+    "at",
+    "be",
+    "was",
+    "were",
+    "you",
+    "your",
+    "me",
+    "my",
+    "she",
+    "he",
+    "her",
+    "his",
+    "they",
+    "their",
+    "them",
+    "who",
+    "what",
+    "when",
+    "where",
+}
+
 _COMPLETION_CLAIM = (
     "return is complete",
     "return's complete",
@@ -239,6 +309,50 @@ def unsupported_facts(reply: str, payload: object) -> list[str]:
         if not completion_is_grounded(payload):
             problems.append("completion")
 
+    problems.extend(_ungrounded_author_or_plot(reply, payload, blob))
+    return problems
+
+
+def _has_key(node: object, key: str) -> bool:
+    if isinstance(node, dict):
+        if key in node:
+            return True
+        return any(_has_key(value, key) for value in node.values())
+    if isinstance(node, list):
+        return any(_has_key(value, key) for value in node)
+    return False
+
+
+def _ungrounded_author_or_plot(reply: str, payload: object, blob: str) -> list[str]:
+    """Author names and plot phrases that the tool payload did not contain."""
+
+    problems: list[str] = []
+    for match in _AUTHOR_CLAIM.finditer(reply):
+        name = re.sub(r"\s+", " ", match.group(1)).strip(" .")
+        if name and name.casefold() not in blob:
+            problems.append(name)
+    for match in _PLOT_CLAIM.finditer(reply):
+        phrase = re.sub(r"\s+", " ", match.group(1)).strip(" .")
+        if phrase and phrase.casefold() not in blob:
+            problems.append(phrase)
+    if _has_key(payload, "summary"):
+        problems.extend(_summary_swap(reply, blob))
+    return problems
+
+
+def _summary_swap(reply: str, blob: str) -> list[str]:
+    """Content words in an about-book draft that are not in the catalog summary."""
+
+    problems: list[str] = []
+    for sentence in re.split(r"[.!?]+", reply):
+        words = re.findall(r"[A-Za-z']+", sentence)
+        missing = [
+            word
+            for word in words
+            if len(word) > 2 and word.casefold() not in _PLOT_STOP and word.casefold() not in blob
+        ]
+        if missing:
+            problems.append(" ".join(missing))
     return problems
 
 
