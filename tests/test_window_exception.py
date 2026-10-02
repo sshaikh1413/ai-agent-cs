@@ -57,6 +57,12 @@ def test_too_late_lists_every_recent_order_with_its_mark() -> None:
     assert "August 15, 2026" in turn.template
     assert "September 26, 2026" in turn.template
     assert unsupported_facts(turn.template, turn.payload) == []
+    assert [choice.order_id for choice in turn.choices] == [
+        order["orderId"] for order in turn.tools[0].payload["orders"]
+    ]
+    assert [choice.mark for choice in turn.choices] == [
+        order["mark"] for order in turn.tools[0].payload["orders"]
+    ]
     marks = {order["title"]: order["mark"] for order in turn.tools[0].payload["orders"]}
     assert marks == {
         "Piranesi": "Delivered and past the 30-day window",
@@ -497,3 +503,62 @@ def test_reset_removes_the_exception_return_receipt_and_label() -> None:
     assert kept["orderId"] == "BLY-18440"
     assert kept["title"] == "Piranesi"
     assert kept["reason"] == "pages fell out"
+
+
+def _offered_piranesi() -> tuple[FakeStore, Machine, Session]:
+    store = _store()
+    machine = Machine(store)
+    session = _session()
+    machine.step(session, "Is it too late to return Piranesi?", today=TODAY, now=NOW)
+    offer = machine.step(session, REASON, today=TODAY, now=NOW)
+    assert session.phase == "exception_offer"
+    assert session.order_id == "BLY-18440"
+    assert "Is that acceptable?" in offer.template
+    assert "start_return" not in store.calls
+    return store, machine, session
+
+
+def test_why_not_asks_to_confirm_then_yes_writes_once() -> None:
+    for phrase in ("why not", "I guess", "whatever", "Why not?", "whatever!"):
+        assert accepts_store_credit_exception(phrase) is False, phrase
+        assert closest_exception_reply(phrase) is None, phrase
+        store, machine, session = _offered_piranesi()
+        held = machine.step(session, phrase, today=TODAY, now=NOW)
+        assert "start_return" not in store.calls, phrase
+        assert session.phase == "exception_offer", phrase
+        assert session.order_id == "BLY-18440", phrase
+        assert session.destination is None, phrase
+        assert "confirm" in held.template.lower(), phrase
+        assert "store credit" in held.template, phrase
+        assert "15.99" in held.template, phrase
+        assert "BLY-18440" in held.template, phrase
+        assert "Piranesi" in held.template, phrase
+        assert "Is that acceptable?" not in held.template, phrase
+        assert "Visa" not in held.template, phrase
+        assert held.choices == [], phrase
+        assert unsupported_facts(held.template, held.payload) == [], phrase
+        assert held.tools[0].payload["amount"] == "15.99"
+        assert held.tools[0].payload["orderId"] == "BLY-18440"
+
+    store, machine, session = _offered_piranesi()
+    machine.step(session, "why not", today=TODAY, now=NOW)
+    refused = machine.step(session, "no", today=TODAY, now=NOW)
+    assert "start_return" not in store.calls
+    assert session.destination is None
+    assert session.order_id == "BLY-18440"
+    assert "Visa" not in refused.template
+    card = machine.step(session, "card is fine", today=TODAY, now=NOW)
+    assert "start_return" not in store.calls
+    assert session.destination is None
+    assert session.order_id == "BLY-18440"
+    assert "Visa" not in card.template
+    assert "store credit" in card.template
+
+    done = machine.step(session, "yes", today=TODAY, now=NOW)
+    assert store.calls.count("start_return") == 1
+    assert len(store.repo.returns) == 1
+    assert done.tools[0].payload["destination"] == "store_credit"
+    assert done.tools[0].payload["exception"] is True
+    assert done.tools[0].payload["orderId"] == "BLY-18440"
+    assert "15.99" in done.template
+    assert "Visa" not in done.template

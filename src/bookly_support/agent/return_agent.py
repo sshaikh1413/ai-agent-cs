@@ -13,6 +13,7 @@ from bookly_support.agent.provider import (
     ChatRequest,
     DeskInfo,
     DeskOrder,
+    OrderChoice,
     ParcelLabel,
     ReceiptDownload,
     ToolTrace,
@@ -87,6 +88,10 @@ class ReturnAgent:
             label=label_download(turn, customer_id),
             step=turn.step,
             opening=_welcome(prior, memory, name) if started else None,
+            choices=[
+                OrderChoice(order_id=choice.order_id, title=choice.title, mark=choice.mark)
+                for choice in turn.choices
+            ],
         )
 
     def _session_for(self, customer_id: str, conversation_id: str | None) -> tuple[Session, bool]:

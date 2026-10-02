@@ -16,6 +16,7 @@ from bookly_support.agent.resolve import (
     asks_order_status,
     asks_too_late,
     book_question,
+    hedges_store_credit_exception,
     confirms_shown_order,
     destination_choice,
     is_decline,
@@ -41,6 +42,7 @@ from bookly_support.agent.templates import (
     empathy_other,
     delivered_window_list,
     exception_completed,
+    exception_confirm,
     exception_offer,
     late_apology,
     list_orders,
@@ -125,6 +127,15 @@ class Session:
     exception: bool = False
 
 
+@dataclass(frozen=True)
+class OrderChoice:
+    """One book the customer can click. Copied from the tool payload."""
+
+    order_id: str
+    title: str
+    mark: str
+
+
 @dataclass
 class Turn:
     template: str
@@ -134,6 +145,7 @@ class Turn:
     required: list[str] = field(default_factory=list)
     step: str = "Step: which order"
     customer_reason: str | None = None
+    choices: list[OrderChoice] = field(default_factory=list)
 
     @property
     def payload(self) -> dict:
@@ -256,26 +268,58 @@ class Machine:
         )
         kind, matches = resolve_order(message, orders, today)
         if kind == "week_none":
-            return Turn(
-                template=week_none(listed.payload["orders"]),
-                instruction="No order was placed about a week ago. Ask them to pick from the listed orders. Do not say a return has started.",
-                tools=[listed],
-                required=_titles(listed.payload["orders"]),
+            if not orders:
+                return Turn(
+                    template=week_none([]),
+                    instruction=(
+                        "No order was placed about a week ago, and there is nothing recent to return. "
+                        "Say so. Do not invent an order."
+                    ),
+                    tools=[listed],
+                )
+            return self._ask_to_choose(
+                listed,
+                orders,
+                today,
+                week_none(orders),
+                (
+                    "No order was placed about a week ago. "
+                    "Ask which book they want, in one short question. "
+                    "Do not read the titles or the order ids. "
+                    "Do not invent an order. Do not say a return has started."
+                ),
             )
         if kind == "ambiguous":
-            public = [_public_order(order) for order in matches]
-            return Turn(
-                template=week_ambiguous(public) if _is_week_ask(message) else list_orders(public),
-                instruction="More than one order matches. Ask which one they want. Do not say a return has started.",
-                tools=[listed],
-                required=_titles(public),
+            return self._ask_to_choose(
+                listed,
+                matches,
+                today,
+                week_ambiguous(matches) if _is_week_ask(message) else list_orders(matches),
+                (
+                    "More than one order matches. "
+                    "Ask which one they want, in one short question. "
+                    "Do not read the titles or the order ids. "
+                    "Do not invent an order. Do not say a return has started."
+                ),
             )
         if kind != "selected":
-            return Turn(
-                template=list_orders(listed.payload["orders"]),
-                instruction="They want to return a product. Name every listed title and order id and ask which one. Do not say a return has started.",
-                tools=[listed],
-                required=_titles(listed.payload["orders"]),
+            if not orders:
+                return Turn(
+                    template=list_orders([]),
+                    instruction="There is nothing recent to return. Say so. Do not invent an order.",
+                    tools=[listed],
+                )
+            return self._ask_to_choose(
+                listed,
+                orders,
+                today,
+                list_orders(orders),
+                (
+                    "They want to return a product. "
+                    "Ask which book they want to return, in one short question. "
+                    "Do not read the titles or the order ids. "
+                    "Do not invent an order. Do not say a return has started."
+                ),
             )
 
         selected = matches[0]
@@ -484,6 +528,8 @@ class Machine:
             )
         if kind == "several":
             public = [_status_facts(order) for order in chosen]
+            marked = [_marked_order(order, today, self._store.return_window_days()) for order in chosen]
+            choice_rows = _choice_list(marked)
             return Turn(
                 template=order_status_choices(public),
                 instruction=(
@@ -495,12 +541,16 @@ class Machine:
                     ToolTrace(
                         name="list_recent_orders",
                         summary=f"Listed {len(public)} orders for a status question.",
-                        payload={"orders": public},
+                        payload={
+                            "orders": public,
+                            "choices": [_choice_payload(choice) for choice in choice_rows],
+                        },
                     )
                 ],
                 intent="order_status",
                 required=_status_required(public),
                 step="Step: order status",
+                choices=choice_rows,
             )
 
         selected = chosen[0]
@@ -814,9 +864,17 @@ class Machine:
             session.exception = True
             session.phase = "write"
             return self._write(session, today, now)
+        if hedges_store_credit_exception(message):
+            return self._confirm_exception(session)
         return self._offer_exception(session)
 
     def _offer_exception(self, session: Session) -> Turn:
+        return self._exception_turn(session, confirm=False)
+
+    def _confirm_exception(self, session: Session) -> Turn:
+        return self._exception_turn(session, confirm=True)
+
+    def _exception_turn(self, session: Session, *, confirm: bool) -> Turn:
         if session.order_id is None:
             raise RuntimeError("an exception offer requires an order")
         options = run_tool(
@@ -843,6 +901,32 @@ class Machine:
             "storeCreditOnly": True,
             "cardOffered": False,
         }
+        if confirm:
+            return Turn(
+                template=exception_confirm(payload),
+                instruction=(
+                    "They did not clearly accept or refuse the store credit. "
+                    "Ask one confirming question, in a clerk's voice, whether they are good "
+                    "with the one-time store credit. Copy the amount, the title, and the order id "
+                    "from the JSON. Do not repeat the earlier offer. Do not say a return is complete. "
+                    "Do not offer the Visa, the card, or original payment."
+                ),
+                tools=[
+                    ToolTrace(
+                        name="get_refund_options",
+                        summary=f"Confirm store credit for {payload['orderId']}.",
+                        payload=payload,
+                    )
+                ],
+                required=[
+                    payload["title"],
+                    payload["amount"],
+                    payload["orderId"],
+                    "store credit",
+                    "confirm",
+                ],
+                step="Step: confirm store credit",
+            )
         return Turn(
             template=exception_offer(payload),
             instruction=(
@@ -858,6 +942,26 @@ class Machine:
             ],
             required=[payload["title"], payload["amount"], "store credit"],
             step="Step: store credit exception",
+        )
+
+    def _ask_to_choose(
+        self,
+        listed: ToolTrace,
+        orders: list[dict],
+        today: date,
+        template: str,
+        instruction: str,
+    ) -> Turn:
+        """Ask which order, with one choice per order taken from the tool payload."""
+
+        marked = [_marked_order(order, today, self._store.return_window_days()) for order in orders]
+        listed.payload = {"orders": marked}
+        listed.summary = f"Listed {len(marked)} orders to choose from."
+        return Turn(
+            template=template,
+            instruction=instruction,
+            tools=[listed],
+            choices=_choice_list(marked),
         )
 
     def _listed(self, session: Session) -> tuple[list[dict], ToolTrace]:
@@ -911,6 +1015,7 @@ class Machine:
             tools=[listed],
             required=required,
             step="Step: which book",
+            choices=_choice_list(marked),
         )
 
     def _open_window(self, session: Session, selected: dict, today: date, listed: ToolTrace) -> Turn:
@@ -1068,8 +1173,28 @@ def _iso(value: datetime | str | None) -> str | None:
     return value.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _titles(orders: list[dict]) -> list[str]:
-    return [order["title"] for order in orders if order.get("title")]
+def _choice_payload(choice: OrderChoice) -> dict:
+    return {"orderId": choice.order_id, "title": choice.title, "mark": choice.mark}
+
+
+def _choice_list(orders: list[dict]) -> list[OrderChoice]:
+    """Order id, title, and mark already stored on these payload rows."""
+
+    choices: list[OrderChoice] = []
+    for order in orders:
+        order_id = order.get("orderId")
+        title = order.get("title")
+        mark = order.get("mark")
+        if not isinstance(order_id, str) or not order_id.strip():
+            continue
+        if not isinstance(title, str) or not title.strip():
+            continue
+        if not isinstance(mark, str) or not mark.strip():
+            continue
+        choices.append(
+            OrderChoice(order_id=order_id.strip(), title=title.strip(), mark=mark.strip())
+        )
+    return choices
 
 
 def _is_week_ask(message: str) -> bool:

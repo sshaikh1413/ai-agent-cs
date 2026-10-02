@@ -5,27 +5,19 @@ from __future__ import annotations
 import re
 
 
-def _listed(orders: list[dict]) -> str:
-    parts = [f"{order['title']}, order {order['orderId']}" for order in orders]
-    if len(parts) == 1:
-        return parts[0]
-    if len(parts) == 2:
-        return f"{parts[0]} and {parts[1]}"
-    return ", ".join(parts[:-1]) + ", and " + parts[-1]
-
-
 def list_orders(orders: list[dict]) -> str:
+    """One short question. Titles and order ids stay on the choice list."""
+
     if not orders:
         return "There's nothing recent to return."
-    return (
-        f"I can help with a return. I've got {_listed(orders)}. "
-        "Which one do you want to return?"
-    )
+    return "Which book do you want to return?"
 
 
 def week_ambiguous(orders: list[dict]) -> str:
+    if not orders:
+        return "Which one should I return?"
     return (
-        f"I've got more than one from about a week ago: {_listed(orders)}. "
+        "I've got more than one from about a week ago. "
         "Which one should I return?"
     )
 
@@ -35,7 +27,7 @@ def week_none(orders: list[dict]) -> str:
         return "I don't see an order from about a week ago, and there's nothing recent to return."
     return (
         "I don't see an order from about a week ago. "
-        f"I can return {_listed(orders)}. Which one do you want?"
+        "Which book do you want to return?"
     )
 
 
@@ -308,6 +300,15 @@ def exception_offer(options: dict) -> str:
     return (
         f"I can make a one-time store credit exception for {options['amount']} "
         f"on {options['title']}, order {options['orderId']}. Is that acceptable?"
+    )
+
+
+def exception_confirm(options: dict) -> str:
+    """A shrug is not a yes. Ask once, and stay on the amount and the order."""
+
+    return (
+        "I just want to confirm — you're good with the one-time store credit "
+        f"for {options['amount']} on {options['title']}, order {options['orderId']}, correct?"
     )
 
 

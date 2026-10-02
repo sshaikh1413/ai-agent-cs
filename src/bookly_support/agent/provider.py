@@ -102,6 +102,14 @@ class ParcelLabel(BaseModel):
     url: str
 
 
+class OrderChoice(BaseModel):
+    """A book the customer can click. Taken from the tool payload, not the sentence."""
+
+    order_id: str
+    title: str
+    mark: str
+
+
 class ChatReply(BaseModel):
     reply: str
     intent: Intent
@@ -111,6 +119,7 @@ class ChatReply(BaseModel):
     label: ParcelLabel | None = None
     step: str
     opening: str | None = None
+    choices: list[OrderChoice] = Field(default_factory=list)
 
 
 class DeskOrder(BaseModel):

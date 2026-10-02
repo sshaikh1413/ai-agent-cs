@@ -5,7 +5,11 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from bookly_support.agent.destination import closest_destination, closest_exception_reply
+from bookly_support.agent.destination import (
+    closest_destination,
+    closest_exception_reply,
+    is_exception_hedge,
+)
 from bookly_support.agent.window import week_matches
 
 _ORDER_ID = re.compile(r"\bBLY-\d+\b", re.IGNORECASE)
@@ -245,14 +249,23 @@ def wants_return_in_play(text: str) -> bool:
     return lowered in {"yes", "i'll take it", "ill take it", "i will take it"}
 
 
+def hedges_store_credit_exception(text: str) -> bool:
+    """A shrug at the store-credit offer. Not a yes, and not a no."""
+
+    return is_exception_hedge(text)
+
+
 def accepts_store_credit_exception(text: str) -> bool:
     """Yes to the store-credit exception. A card phrase is not a yes.
 
     Closed yes phrases stay as they are. "Card is fine" stays on the offer.
-    It does not select the Visa. Any other sentence is embedded against a few
-    acceptance examples and a few refusals. A clear no does not accept.
+    It does not select the Visa. "Why not", "I guess", and "whatever" are not
+    a yes. Any other sentence is embedded against a few acceptance examples
+    and a few refusals. A clear no does not accept.
     """
 
+    if is_exception_hedge(text):
+        return False
     lowered = _clean(text).replace("\u2019", "'").replace("\u2018", "'").strip(".!")
     if is_decline(lowered):
         return False

@@ -9,6 +9,7 @@ asked to choose.
 
 from __future__ import annotations
 
+import re
 import threading
 
 import numpy as np
@@ -61,6 +62,10 @@ REFUSE_EXAMPLES = (
 _EXCEPTION_LABELS = ("accept",) * len(ACCEPT_EXAMPLES) + ("refuse",) * len(REFUSE_EXAMPLES)
 _EXCEPTION_TEXTS = ACCEPT_EXAMPLES + REFUSE_EXAMPLES
 
+# Neither a clear yes nor a clear no. These stay off the embedding so a shrug
+# cannot accept the exception or be scored as a refusal.
+_EXCEPTION_HEDGES = frozenset({"why not", "i guess", "whatever"})
+
 _lock = threading.Lock()
 _model: TextEmbedding | None = None
 _examples: np.ndarray | None = None
@@ -92,13 +97,24 @@ def closest_destination(text: str) -> str | None:
     return label
 
 
+def is_exception_hedge(text: str) -> bool:
+    """True for a shrug: not a clear yes and not a clear no."""
+
+    cleaned = re.sub(r"\s+", " ", text).strip().lower()
+    cleaned = cleaned.replace("\u2019", "'").replace("\u2018", "'")
+    cleaned = cleaned.strip(" \t.!?,'\"…")
+    return cleaned in _EXCEPTION_HEDGES
+
+
 def closest_exception_reply(text: str) -> str | None:
     """'accept' or 'refuse' when one side is clearly closer, or None.
 
     Used only for the store-credit exception offer. A Visa sentence such as
-    "card is fine" is not an acceptance.
+    "card is fine" is not an acceptance. A shrug such as "why not" is neither.
     """
 
+    if is_exception_hedge(text):
+        return None
     cleaned = text.strip()
     if not cleaned:
         return None

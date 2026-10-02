@@ -376,8 +376,9 @@ def test_script_does_not_write_until_she_chooses_the_card() -> None:
 
     first = machine.step(session, "I want to return a product", today=TODAY, now=NOW)
     assert [tool.name for tool in first.tools] == ["list_recent_orders"]
-    assert "The Midnight Library" in first.template
-    assert "Circe" in first.template
+    assert [choice.title for choice in first.choices] == ["The Midnight Library", "Circe"]
+    assert "The Midnight Library" not in first.template
+    assert "Circe" not in first.template
     assert "start_return" not in store.calls
 
     second = machine.step(session, "the one from about a week ago", today=TODAY, now=NOW)
@@ -464,6 +465,7 @@ def test_two_orders_in_the_same_week_ask_instead_of_choosing() -> None:
     assert "start_return" not in store.calls
     assert session.order_id is None
     assert "Which one" in turn.template
+    assert {choice.order_id for choice in turn.choices} == {"BLY-22018", "BLY-22019"}
 
 
 def test_closed_window_does_not_offer_a_refund() -> None:
@@ -825,8 +827,9 @@ def test_thats_the_one_selects_bobs_single_shown_order() -> None:
         shown = machine.step(session, "I want to return a product", today=TODAY, now=NOW)
         assert session.phase == "identify_order"
         assert session.order_id is None
-        assert "BLY-33010" in shown.template
-        assert "Which one" in shown.template
+        assert [choice.order_id for choice in shown.choices] == ["BLY-33010"]
+        assert "Which book" in shown.template
+        assert "BLY-33010" not in shown.template
 
         picked = machine.step(session, phrase, today=TODAY, now=NOW)
         assert [tool.name for tool in picked.tools] == ["list_recent_orders", "get_order"]
@@ -848,15 +851,72 @@ def test_thats_the_one_selects_bobs_single_shown_order() -> None:
     session = Session(id="conv_two", customer_id="cust_bob")
     machine = Machine(listed)
     first = machine.step(session, "I want to return a product", today=TODAY, now=NOW)
-    assert "BLY-33010" in first.template
-    assert "BLY-33011" in first.template
-    assert "Which one" in first.template
+    assert {choice.order_id for choice in first.choices} == {"BLY-33010", "BLY-33011"}
+    assert "Which book" in first.template
+    assert "BLY-33010" not in first.template
+    assert "BLY-33011" not in first.template
     again = machine.step(session, "that's the one", today=TODAY, now=NOW)
     assert [tool.name for tool in again.tools] == ["list_recent_orders"]
     assert session.phase == "identify_order"
     assert session.order_id is None
-    assert "Which one" in again.template
-    assert "BLY-33010" in again.template
-    assert "BLY-33011" in again.template
+    assert "Which book" in again.template
+    assert {choice.order_id for choice in again.choices} == {"BLY-33010", "BLY-33011"}
+    assert "BLY-33010" not in again.template
+    assert "BLY-33011" not in again.template
     assert "What made you want to send it back?" not in again.template
     assert "get_order" not in listed.calls
+
+
+def test_which_order_turn_offers_a_choice_per_order_without_reading_every_title() -> None:
+    packing = {
+        "orderId": "BLY-44120",
+        "title": "Klara and the Sun",
+        "placedAt": datetime(2026, 10, 1, 14, tzinfo=timezone.utc),
+        "status": "packing",
+        "refundableCents": 1700,
+        "paymentMethodId": "pm_becky_visa",
+    }
+    store = FakeStore(
+        [
+            _order("BLY-44121", "The Night Circus", date(2026, 9, 20), date(2026, 9, 28), 1800),
+            packing,
+            _order("BLY-22044", "Mexican Gothic", date(2026, 8, 1), date(2026, 8, 5), 1699),
+        ]
+    )
+    machine = Machine(store)
+    session = Session(id="conv_choices", customer_id="cust_becky")
+    turn = machine.step(session, "I want to return a product", today=TODAY, now=NOW)
+    assert [choice.order_id for choice in turn.choices] == ["BLY-44121", "BLY-44120", "BLY-22044"]
+    assert [choice.title for choice in turn.choices] == [
+        "The Night Circus",
+        "Klara and the Sun",
+        "Mexican Gothic",
+    ]
+    assert [choice.mark for choice in turn.choices] == [
+        "Delivered and inside the 30-day window",
+        "Still on the way, packing",
+        "Delivered and past the 30-day window",
+    ]
+    payload_orders = turn.tools[0].payload["orders"]
+    assert [order["orderId"] for order in payload_orders] == [choice.order_id for choice in turn.choices]
+    assert [order["mark"] for order in payload_orders] == [choice.mark for choice in turn.choices]
+    for title in ("The Night Circus", "Klara and the Sun", "Mexican Gothic"):
+        assert title not in turn.template
+    for order_id in ("BLY-44121", "BLY-44120", "BLY-22044"):
+        assert order_id not in turn.template
+    assert turn.template == "Which book do you want to return?"
+    invented = f"{turn.template} Circe, order BLY-99999."
+    assert unsupported_facts(invented, turn.payload)
+    assert accept_draft(invented, turn.template, turn.payload, turn.required) == turn.template
+
+    clicked = machine.step(session, turn.choices[0].order_id, today=TODAY, now=NOW)
+    assert session.order_id == "BLY-44121"
+    assert clicked.choices == []
+    assert "What made you want to send it back?" in clicked.template
+
+    typed_session = Session(id="conv_typed", customer_id="cust_becky")
+    machine.step(typed_session, "I want to return a product", today=TODAY, now=NOW)
+    typed = machine.step(typed_session, "Mexican Gothic", today=TODAY, now=NOW)
+    assert typed_session.order_id == "BLY-22044"
+    assert typed.choices == []
+    assert "Mexican Gothic" in typed.template

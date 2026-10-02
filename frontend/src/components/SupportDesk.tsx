@@ -9,6 +9,7 @@ import {
   type CustomerId,
   type DeskInfo,
   type DeskOrder,
+  type OrderChoice,
   type ParcelLabel,
   type ReceiptDownload,
   type ToolTrace,
@@ -29,6 +30,7 @@ type ThreadItem =
       step?: string
       opening?: string
       memory?: boolean
+      choices?: OrderChoice[]
     }
   | { id: string; kind: "error"; text: string; retryMessage: string }
   | { id: string; kind: "pending" }
@@ -206,6 +208,7 @@ export function SupportDesk() {
             label: reply.label,
             step: reply.step,
             opening,
+            choices: reply.choices,
           }),
       )
     } catch (error) {
@@ -346,7 +349,9 @@ export function SupportDesk() {
                             speaking={speakingId === item.id}
                             playbackError={playbackErrorId === item.id}
                             canSpeak={canSpeak}
+                            busy={locked}
                             onSpeak={() => toggleSpeak(item.id, item.text)}
+                            onChoose={send}
                           />
                         ) : null}
                       </li>
@@ -372,7 +377,9 @@ export function SupportDesk() {
                         speaking={speakingId === item.id}
                         playbackError={playbackErrorId === item.id}
                         canSpeak={canSpeak}
+                        busy={locked}
                         onSpeak={() => toggleSpeak(item.id, item.text)}
+                        onChoose={send}
                       />
                     ) : null}
                     {item.kind === "pending" ? <PendingBubble /> : null}
@@ -575,13 +582,17 @@ function AssistantBubble({
   speaking,
   playbackError,
   canSpeak,
+  busy,
   onSpeak,
+  onChoose,
 }: {
   item: Extract<ThreadItem, { kind: "assistant" }>
   speaking: boolean
   playbackError: boolean
   canSpeak: boolean
+  busy: boolean
   onSpeak: () => void
+  onChoose: (orderId: string) => void
 }) {
   return (
     <article className="max-w-[90%] rounded-2xl rounded-bl-md border border-border bg-card px-4 py-3" data-intent={item.intent}>
@@ -606,6 +617,28 @@ function AssistantBubble({
       ) : null}
       {item.opening ? <p className="mb-3 whitespace-pre-wrap">{item.opening}</p> : null}
       <p className="whitespace-pre-wrap">{item.text}</p>
+      {item.choices && item.choices.length > 0 ? (
+        <ul className="mt-3 grid gap-2" aria-label="Choose an order">
+          {item.choices.map((choice) => (
+            <li key={choice.order_id}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                className="h-auto min-h-11 w-full max-w-full items-start justify-start whitespace-normal px-3 py-2 text-left"
+                onClick={() => onChoose(choice.order_id)}
+              >
+                <span className="min-w-0">
+                  <span className="block font-semibold break-words">{choice.title}</span>
+                  <span className="block text-xs font-normal break-words text-muted-foreground">
+                    {choice.order_id} · {choice.mark}
+                  </span>
+                </span>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {item.step ? (
         <p className="mt-3 border-t border-border pt-2 text-sm text-muted-foreground">{item.step}</p>
       ) : null}

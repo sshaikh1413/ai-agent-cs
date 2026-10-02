@@ -60,6 +60,12 @@ export interface ParcelLabel {
   url: string
 }
 
+export interface OrderChoice {
+  order_id: string
+  title: string
+  mark: string
+}
+
 export interface AgentReply {
   reply: string
   intent: AgentIntent
@@ -69,6 +75,7 @@ export interface AgentReply {
   label?: ParcelLabel
   step: string
   opening?: string
+  choices: OrderChoice[]
 }
 
 export interface DeskOrder {
@@ -176,7 +183,30 @@ function assertReply(value: unknown): AgentReply {
     label: assertLabel(record.label),
     step: record.step,
     opening,
+    choices: assertChoices(record.choices),
   }
+}
+
+function assertChoices(value: unknown): OrderChoice[] {
+  if (!Array.isArray(value)) return []
+  const choices: OrderChoice[] = []
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue
+    const record = item as Record<string, unknown>
+    if (
+      typeof record.order_id !== "string" ||
+      typeof record.title !== "string" ||
+      typeof record.mark !== "string"
+    ) {
+      continue
+    }
+    const order_id = record.order_id.trim()
+    const title = record.title.trim()
+    const mark = record.mark.trim()
+    if (!order_id || !title || !mark) continue
+    choices.push({ order_id, title, mark })
+  }
+  return choices
 }
 
 function assertLabel(value: unknown): ParcelLabel | undefined {

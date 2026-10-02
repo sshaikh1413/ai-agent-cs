@@ -124,6 +124,11 @@ def test_chat_step_matches_the_phase() -> None:
     assert listed.step == "Step: which order"
     assert phraser.names == ["Becky Alvarez"]
     assert listed.opening is None
+    assert len(listed.choices) == 1
+    assert listed.choices[0].order_id == "BLY-22044"
+    assert listed.choices[0].title == "Mexican Gothic"
+    assert listed.choices[0].mark == "Delivered and inside the 30-day window"
+    assert "Mexican Gothic" not in listed.reply
 
     asked = agent.reply(
         ChatRequest(
@@ -134,6 +139,7 @@ def test_chat_step_matches_the_phase() -> None:
     )
     assert asked.step == "Step: why it's coming back"
     assert asked.opening is None
+    assert asked.choices == []
 
     offered = agent.reply(
         ChatRequest(

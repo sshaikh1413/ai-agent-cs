@@ -77,6 +77,7 @@ def test_one_in_progress_order_returns_the_stored_status() -> None:
         assert turn.tools[0].payload["status"] == "packing"
         assert turn.tools[0].payload["statusDetail"] == PACKED
         assert facts_allowed(turn.template, turn.payload)
+        assert turn.choices == []
         assert session.phase == "identify_order"
         assert session.order_id is None
     assert "start_return" not in store.calls
@@ -102,6 +103,11 @@ def test_two_in_progress_orders_ask_which() -> None:
     assert PACKED in turn.template
     assert SHIPPED in turn.template
     assert [tool.name for tool in turn.tools] == ["list_recent_orders"]
+    assert {choice.order_id for choice in turn.choices} == {"BLY-44120", "BLY-44121"}
+    assert {choice.mark for choice in turn.choices} == {
+        "Still on the way, packing",
+        "Still on the way, shipped",
+    }
     assert facts_allowed(turn.template, turn.payload)
     assert session.phase == "identify_order"
     assert session.order_id is None
