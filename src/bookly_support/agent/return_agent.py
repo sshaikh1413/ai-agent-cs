@@ -130,6 +130,7 @@ def _session(document: dict) -> Session:
         closed_at=document.get("closedAt"),
         reason=document.get("reason"),
         reason_kind=document.get("reasonKind"),
+        sentiment=document.get("sentiment"),
         title=document.get("title"),
         genre=document.get("genre"),
     )
@@ -146,6 +147,7 @@ def _session_doc(session: Session) -> dict:
         "closedAt": session.closed_at,
         "reason": session.reason,
         "reasonKind": session.reason_kind,
+        "sentiment": session.sentiment,
         "title": session.title,
         "genre": session.genre,
     }

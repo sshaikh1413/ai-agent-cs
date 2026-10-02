@@ -9,11 +9,13 @@ from typing import Protocol
 from bookly_support.agent.allowlist import run_tool
 from bookly_support.agent.reasons import classify_reason
 from bookly_support.agent.resolve import (
+    asks_for_recommendation,
     destination_choice,
     is_decline,
     is_password_reset,
     resolve_order,
 )
+from bookly_support.agent.sentiment import label_sentiment
 from bookly_support.agent.templates import (
     ask_anything_else,
     ask_reason,
@@ -28,6 +30,7 @@ from bookly_support.agent.templates import (
     not_completed,
     outside_window,
     password_refused,
+    recommend_reply,
     refund_choice,
     week_ambiguous,
     week_none,
@@ -44,7 +47,7 @@ class ReturnStore(Protocol):
     def get_refund_options(self, customer_id: str, order_id: str) -> dict | None:
         """Refund destinations for an order on this account."""
 
-    def recommend_book(self, customer_id: str) -> dict:
+    def recommend_book(self, customer_id: str, seed: str) -> dict:
         """One non-horror title this customer does not already own."""
 
     def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
@@ -59,6 +62,7 @@ class ReturnStore(Protocol):
         now: datetime,
         reason: str | None = None,
         reason_kind: str | None = None,
+        sentiment: str | None = None,
     ) -> dict:
         """Write the return, or return the receipt already stored."""
 
@@ -81,6 +85,7 @@ class Session:
     closed_at: datetime | None = None
     reason: str | None = None
     reason_kind: str | None = None
+    sentiment: str | None = None
     title: str | None = None
     genre: str | None = None
 
@@ -124,10 +129,46 @@ class Machine:
                 instruction="They are done. Close the chat in one short English sentence. Do not mention orders, money, dates, or cards.",
                 intent="clarify",
             )
+        if asks_for_recommendation(message):
+            return self._recommend(session)
         return Turn(
             template=ask_anything_else(),
             instruction="Ask if they need help with anything else. Do not mention orders, money, dates, or cards.",
             intent="clarify",
+        )
+
+    def _recommend(self, session: Session) -> Turn:
+        seed = session.order_id or session.customer_id
+        recommendation = run_tool(
+            "done",
+            "recommend_book",
+            lambda: self._store.recommend_book(session.customer_id, seed),
+        )
+        title = recommendation.get("title")
+        if isinstance(title, str) and title.strip():
+            instruction = (
+                "Reply with only the title in the JSON. "
+                "Do not invent a book title. Do not name any other book."
+            )
+            required = [title.strip()]
+        else:
+            instruction = "Say there is no title to suggest. Do not name a book."
+            required = []
+        return Turn(
+            template=recommend_reply(recommendation),
+            instruction=instruction,
+            tools=[
+                ToolTrace(
+                    name="recommend_book",
+                    summary=(
+                        f"Suggested {title}."
+                        if isinstance(title, str) and title.strip()
+                        else "No non-horror title was available."
+                    ),
+                    payload=recommendation,
+                )
+            ],
+            required=required,
         )
 
     def _identify(self, session: Session, message: str, today: date, now: datetime) -> Turn:
@@ -231,6 +272,7 @@ class Machine:
             return self._identify(session, message, today, now)
         session.reason = message.strip()
         session.reason_kind = classify_reason(session.reason)
+        session.sentiment = label_sentiment(session.reason)
         session.phase = "empathy"
         return self._empathy_and_offer(session, today, now)
 
@@ -238,7 +280,10 @@ class Machine:
         del today
         if session.reason_kind is None and session.reason:
             session.reason_kind = classify_reason(session.reason)
+        if session.sentiment is None and session.reason is not None:
+            session.sentiment = label_sentiment(session.reason)
         title = session.title or "this book"
+        sentiment = session.sentiment
         traces: list[ToolTrace] = []
         lead = ""
         instruction = ""
@@ -263,11 +308,12 @@ class Machine:
                 )
             )
             if discount.get("percentLabel") and discount.get("code"):
-                lead = empathy_late(title, discount)
+                lead = empathy_late(title, discount, sentiment)
                 extra_required = ["20%", str(discount["code"])]
             else:
                 lead = f"I'm sorry {title} arrived late and the gift was missed."
             instruction = (
+                f"{_tone_clause(sentiment)} "
                 "Apologize for the delay and the missed gift. "
                 "Copy 20% and the discount code from the JSON. "
                 "Do not recommend a book. Do not invent a percent or a code."
@@ -276,7 +322,10 @@ class Machine:
             recommendation = run_tool(
                 "empathy",
                 "recommend_book",
-                lambda: self._store.recommend_book(session.customer_id),
+                lambda: self._store.recommend_book(
+                    session.customer_id,
+                    session.order_id or session.customer_id,
+                ),
                 reason_kind=session.reason_kind,
             )
             traces.append(
@@ -291,19 +340,21 @@ class Machine:
                 )
             )
             if recommendation.get("title"):
-                lead = empathy_horror(title, recommendation)
+                lead = empathy_horror(title, recommendation, sentiment)
                 extra_required = [str(recommendation["title"])]
             else:
-                lead = empathy_horror_plain(title)
+                lead = empathy_horror_plain(title, sentiment)
             instruction = (
+                f"{_tone_clause(sentiment)} "
                 "Apologize that it was not a good read and not scary. "
                 "Recommend only the title in the JSON. "
                 "Do not mention a discount, a percent, or a code. "
                 "Do not invent a book title."
             )
         else:
-            lead = empathy_other(title, session.reason or "")
+            lead = empathy_other(title, session.reason or "", sentiment)
             instruction = (
+                f"{_tone_clause(sentiment)} "
                 "Show empathy from the customer's reason and the book title. "
                 "Do not recommend a book. Do not mention a discount, a percent, or a code. "
                 "Do not invent a book title."
@@ -373,6 +424,7 @@ class Machine:
                 now,
                 reason=session.reason,
                 reason_kind=session.reason_kind,
+                sentiment=session.sentiment,
             ),
         )
         wrote = ToolTrace(
@@ -430,6 +482,14 @@ def _is_week_ask(message: str) -> bool:
     from bookly_support.agent.resolve import mentions_week
 
     return mentions_week(message)
+
+
+def _tone_clause(sentiment: str | None) -> str:
+    if sentiment == "negative":
+        return "Sound especially sorry."
+    if sentiment == "positive":
+        return "Thank them for explaining, then stay sorry."
+    return "Keep the apology plain."
 
 
 def _write_summary(result: dict) -> str:

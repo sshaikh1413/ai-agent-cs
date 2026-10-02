@@ -14,8 +14,10 @@ from bookly_support.agent.queries import (
     goodwill_discount,
     list_recent_orders,
 )
+from bookly_support.agent.checker import accept_draft
 from bookly_support.agent.recommendations import choose_recommendation
 from bookly_support.agent.return_agent import receipt_download
+from bookly_support.agent.sentiment import label_sentiment
 from bookly_support.agent.returns import commit_return
 
 TODAY = date(2026, 10, 1)
@@ -45,7 +47,7 @@ def test_only_the_return_tools_exist() -> None:
     assert "issue_goodwill_discount" not in allowed_tools("write", "late_delivery")
     assert allowed_tools("choose_destination") == frozenset({"get_refund_options"})
     assert allowed_tools("write") == frozenset({"start_return"})
-    assert allowed_tools("done") == frozenset()
+    assert allowed_tools("done") == frozenset({"recommend_book"})
     assert allowed_tools("closed") == frozenset()
 
 
@@ -187,6 +189,7 @@ class FakeStore:
         self.discounts = _Discounts()
         self.calls: list[str] = []
         self._discount_codes_used: list[str] = []
+        self.last_seed: str | None = None
 
     def list_recent_orders(self, customer_id: str) -> list[dict]:
         assert customer_id == self.customer_id
@@ -205,12 +208,14 @@ class FakeStore:
         detail["policy"] = "Delivered books can be returned within 30 days."
         return detail
 
-    def recommend_book(self, customer_id: str) -> dict:
+    def recommend_book(self, customer_id: str, seed: str) -> dict:
         assert customer_id == self.customer_id
         self.calls.append("recommend_book")
+        self.last_seed = seed
         chosen = choose_recommendation(
             [order["title"] for order in self.orders],
             self.catalog,
+            seed,
         )
         if chosen is None:
             return {"title": None, "genre": None, "author": None}
@@ -257,6 +262,7 @@ class FakeStore:
         now: datetime,
         reason: str | None = None,
         reason_kind: str | None = None,
+        sentiment: str | None = None,
     ) -> dict:
         assert customer_id == self.customer_id
         self.calls.append("start_return")
@@ -274,6 +280,7 @@ class FakeStore:
             new_ids=lambda: ("ret_fixed", "rcpt_fixed"),
             reason=reason,
             reason_kind=reason_kind,
+            sentiment=sentiment,
         )
 
 
@@ -358,6 +365,7 @@ def test_reason_is_stored_on_the_return_only_after_it_completes() -> None:
     assert stored["status"] == "completed"
     assert stored["reason"] == "It arrived late"
     assert stored["reasonKind"] == "late_delivery"
+    assert stored["sentiment"] == "neutral"
     assert stored["orderId"] == "BLY-22018"
     link = receipt_download(done, "cust_becky")
     assert link is not None
@@ -414,12 +422,17 @@ def test_horror_path_recommends_a_book_and_skips_the_discount() -> None:
     turn = machine.step(session, "It wasn't scary at all", today=TODAY, now=NOW)
     assert [tool.name for tool in turn.tools] == ["recommend_book", "get_refund_options"]
     assert "issue_goodwill_discount" not in store.calls
-    assert turn.tools[0].payload["title"] == "Piranesi"
+    expected = choose_recommendation(["Mexican Gothic"], _CATALOG, "BLY-22044")
+    assert expected is not None
+    assert expected["genre"].casefold() != "horror"
+    assert turn.tools[0].payload["title"] == expected["title"]
     assert "not scary" in turn.template
-    assert "Piranesi" in turn.template
+    assert expected["title"] in turn.template
+    assert "Thank you for telling me" in turn.template
     assert "20%" not in turn.template
     assert session.phase == "choose_destination"
     assert session.reason_kind == "other"
+    assert session.sentiment == "positive"
 
 
 def test_late_delivery_issues_one_code_and_a_second_call_matches() -> None:
@@ -489,3 +502,131 @@ def test_changed_my_mind_on_a_non_horror_book_does_neither() -> None:
     assert "I hear you: changed my mind." in turn.template
     assert session.reason == "changed my mind"
     assert session.reason_kind == "other"
+    assert session.sentiment == "neutral"
+
+
+def test_negative_late_delivery_still_discounts_and_does_not_recommend() -> None:
+    store = FakeStore(
+        [_order("BLY-33010", "A Gentleman in Moscow", date(2026, 9, 12), date(2026, 9, 28), 1800, "fiction")],
+        customer_id="cust_bob",
+        catalog=_CATALOG,
+    )
+    session = Session(id="conv_angry", customer_id="cust_bob")
+    machine = Machine(store)
+    machine.step(session, "I want to return A Gentleman in Moscow", today=TODAY, now=NOW)
+    turn = machine.step(
+        session,
+        "This awful late delivery ruined everything and I hated it",
+        today=TODAY,
+        now=NOW,
+    )
+    assert session.sentiment == "negative"
+    assert session.reason_kind == "late_delivery"
+    assert [tool.name for tool in turn.tools] == ["issue_goodwill_discount", "get_refund_options"]
+    assert "recommend_book" not in store.calls
+    assert "really sorry" in turn.template
+    assert "20%" in turn.template
+
+
+def test_negative_sentiment_is_stored_on_the_completed_return() -> None:
+    store = FakeStore(
+        [_order("BLY-22002", "Circe", date(2026, 9, 11), date(2026, 9, 15), 1700, "fiction")],
+        catalog=_CATALOG,
+    )
+    session = Session(id="conv_feel", customer_id="cust_becky")
+    machine = Machine(store)
+    reason = "This book was awful and I hated every page."
+    machine.step(session, "I want to return Circe", today=TODAY, now=NOW)
+    asked = machine.step(session, reason, today=TODAY, now=NOW)
+    assert session.sentiment == label_sentiment(reason) == "negative"
+    assert "really sorry" in asked.template
+    assert "recommend_book" not in store.calls
+    assert "issue_goodwill_discount" not in store.calls
+    assert store.repo.returns == {}
+    machine.step(session, "store credit", today=TODAY, now=NOW)
+    stored = next(iter(store.repo.returns.values()))
+    assert stored["reason"] == reason
+    assert stored["reasonKind"] == "other"
+    assert stored["sentiment"] == "negative"
+
+
+def test_done_phase_recommendation_replies_with_only_that_title() -> None:
+    store = FakeStore(
+        [_order("BLY-22044", "Mexican Gothic", date(2026, 9, 30), date(2026, 10, 1), 1699, "horror")],
+        catalog=_CATALOG,
+    )
+    session = Session(
+        id="conv_done",
+        customer_id="cust_becky",
+        phase="done",
+        order_id="BLY-22044",
+        title="Mexican Gothic",
+        genre="horror",
+    )
+    turn = Machine(store).step(session, "do you recommend any books for me?", today=TODAY, now=NOW)
+    assert [tool.name for tool in turn.tools] == ["recommend_book"]
+    assert store.last_seed == "BLY-22044"
+    title = turn.tools[0].payload["title"]
+    expected = choose_recommendation(["Mexican Gothic"], _CATALOG, "BLY-22044")
+    assert expected is not None
+    assert title == expected["title"]
+    assert turn.template == title
+    for book in _CATALOG:
+        if book["title"] != title:
+            assert book["title"] not in turn.template
+    assert session.phase == "done"
+    other = next(
+        book["title"]
+        for book in _CATALOG
+        if book["title"] != title and book["genre"] != "horror"
+    )
+    draft = f"You might enjoy {other} instead."
+    assert accept_draft(draft, turn.template, turn.payload, turn.required) == turn.template
+
+
+def test_done_phase_without_an_order_seeds_the_pick_from_the_customer() -> None:
+    store = FakeStore([], catalog=_CATALOG, customer_id="cust_becky")
+    session = Session(id="conv_done", customer_id="cust_becky", phase="done")
+    turn = Machine(store).step(session, "do you recommend any books for me?", today=TODAY, now=NOW)
+    expected = choose_recommendation([], _CATALOG, "cust_becky")
+    assert store.last_seed == "cust_becky"
+    assert expected is not None
+    assert turn.template == expected["title"]
+    assert session.phase == "done"
+
+
+def test_done_phase_with_nothing_left_names_no_book() -> None:
+    catalog = [
+        {"title": "The Shining", "genre": "horror"},
+        {"title": "Mexican Gothic", "genre": "horror"},
+    ]
+    store = FakeStore(
+        [_order("BLY-22044", "Mexican Gothic", date(2026, 9, 30), date(2026, 10, 1), 1699, "horror")],
+        catalog=catalog,
+    )
+    session = Session(id="conv_done", customer_id="cust_becky", phase="done", order_id="BLY-22044")
+    turn = Machine(store).step(session, "Can you suggest a book?", today=TODAY, now=NOW)
+    assert [tool.name for tool in turn.tools] == ["recommend_book"]
+    assert turn.tools[0].payload["title"] is None
+    assert "The Shining" not in turn.template
+    assert "Mexican Gothic" not in turn.template
+    assert "don't have another title" in turn.template
+    assert accept_draft("Try Piranesi.", turn.template, turn.payload, turn.required) == turn.template
+
+
+def test_done_phase_goodbye_closes_and_other_questions_do_not_recommend() -> None:
+    store = FakeStore(
+        [_order("BLY-22044", "Mexican Gothic", date(2026, 9, 30), date(2026, 10, 1), 1699, "horror")],
+        catalog=_CATALOG,
+    )
+    session = Session(id="conv_done", customer_id="cust_becky", phase="done", order_id="BLY-22044")
+    machine = Machine(store)
+    hours = machine.step(session, "What are your store hours?", today=TODAY, now=NOW)
+    assert hours.tools == []
+    assert "recommend_book" not in store.calls
+    assert "anything else" in hours.template
+    assert session.phase == "done"
+    closed = machine.step(session, "no thanks", today=TODAY, now=NOW)
+    assert closed.tools == []
+    assert "recommend_book" not in store.calls
+    assert session.phase == "closed"

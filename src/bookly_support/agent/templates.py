@@ -57,29 +57,48 @@ def ask_reason(order: dict) -> str:
     )
 
 
-def empathy_horror(title: str, recommendation: dict) -> str:
+def _sorry(sentiment: str | None) -> str:
+    """Apology opening. Sentiment changes this wording and nothing about the offer."""
+
+    if sentiment == "negative":
+        return "I'm really sorry"
+    if sentiment == "positive":
+        return "Thank you for telling me. I'm sorry"
+    return "I'm sorry"
+
+
+def empathy_horror(title: str, recommendation: dict, sentiment: str | None = None) -> str:
     return (
-        f"I'm sorry {title} was not a good read and was not scary. "
+        f"{_sorry(sentiment)} {title} was not a good read and was not scary. "
         f"If you'd like something else, try {recommendation['title']}."
     )
 
 
-def empathy_horror_plain(title: str) -> str:
+def empathy_horror_plain(title: str, sentiment: str | None = None) -> str:
     return (
-        f"I'm sorry {title} was not a good read and was not scary. "
+        f"{_sorry(sentiment)} {title} was not a good read and was not scary. "
         "I don't have another title on the shelf to suggest."
     )
 
 
-def empathy_late(title: str, discount: dict) -> str:
+def empathy_late(title: str, discount: dict, sentiment: str | None = None) -> str:
     return (
-        f"I'm sorry {title} arrived late and the gift was missed. "
+        f"{_sorry(sentiment)} {title} arrived late and the gift was missed. "
         f"I can offer {discount['percentLabel']} off your next purchase with code {discount['code']}."
     )
 
 
-def empathy_other(title: str, reason: str) -> str:
-    return f"I'm sorry {title} didn't work out. {_heard(reason)}"
+def empathy_other(title: str, reason: str, sentiment: str | None = None) -> str:
+    return f"{_sorry(sentiment)} {title} didn't work out. {_heard(reason)}"
+
+
+def recommend_reply(recommendation: dict) -> str:
+    """The one catalog title, or a line that names no book."""
+
+    title = recommendation.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return "I don't have another title on the shelf to suggest."
+    return title.strip()
 
 
 def _heard(reason: str) -> str:

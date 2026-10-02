@@ -62,6 +62,7 @@ def commit_return(
     new_ids: Callable[[], tuple[str, str]],
     reason: str | None = None,
     reason_kind: str | None = None,
+    sentiment: str | None = None,
 ) -> dict:
     """Insert a return and its receipt, or return the ones already stored."""
 
@@ -84,6 +85,7 @@ def commit_return(
         "receiptId": receipt_id,
         "reason": reason,
         "reasonKind": reason_kind,
+        "sentiment": sentiment,
     }
     receipt_doc = {
         "_id": receipt_id,

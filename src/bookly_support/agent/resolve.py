@@ -50,6 +50,15 @@ def is_decline(text: str) -> bool:
     return _clean(text).strip(".!") in _DECLINE
 
 
+_RECOMMEND_ASK = re.compile(r"\b(?:recommend(?:ation)?s?|suggest(?:ion)?s?)\b")
+
+
+def asks_for_recommendation(text: str) -> bool:
+    """A request for a book to read. A goodbye is not one of these."""
+
+    return _RECOMMEND_ASK.search(_clean(text)) is not None
+
+
 def mentions_week(text: str) -> bool:
     lowered = _clean(text)
     return any(phrase in lowered for phrase in _WEEK)

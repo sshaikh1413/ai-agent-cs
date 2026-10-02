@@ -22,7 +22,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
     "empathy": frozenset({"recommend_book", "issue_goodwill_discount"}),
     "choose_destination": frozenset({"get_refund_options"}),
     "write": frozenset({"start_return"}),
-    "done": frozenset(),
+    "done": frozenset({"recommend_book"}),
     "closed": frozenset(),
 }
 

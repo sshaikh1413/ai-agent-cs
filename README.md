@@ -7,16 +7,18 @@ The chat is the React desk (typed or spoken English, `en-US`). The API is a Fast
 Tools:
 
 - `list_recent_orders`, `get_order`, `get_refund_options`, and `start_return`, each scoped by `customerId`
-- `recommend_book`, only while offering empathy for a horror return that was not a late delivery
+- `recommend_book`, while offering empathy for a horror return that was not a late delivery, and again after the return is finished if they ask for a book
 - `issue_goodwill_discount`, only when the reason is a late delivery. One 20% code per customer and order
 
-After the order is selected, Mara asks why. A late delivery (including a birthday or a gift) gets an apology and that 20% code. A horror book with any other reason gets an apology and one non-horror catalog title the reader does not already own. Any other reason gets empathy only. Then she asks for the Visa or store credit. `start_return` stores the reason text and `reasonKind` on the completed return and runs only after that choice. A second call returns the same receipt and does not rewrite a return that is already stored.
+After the order is selected, Mara asks why. The words they type are scored with VADER and stored on the completed return as `sentiment` (`negative`, `neutral`, or `positive`) next to `reason` and `reasonKind`. That label can change the apology wording only. A late delivery (including a birthday or a gift) still gets that 20% code and no recommendation. A horror book with any other reason still gets one non-horror catalog title the reader does not already own, and no discount. Any other reason gets empathy only. The title is chosen in our code: skip horror, skip titles they already own, then pick from the order id so the same order always gets the same book. Then she asks for the Visa or store credit. `start_return` stores the reason text, `reasonKind`, and that sentiment label, and runs only after that choice. A second call returns the same receipt and does not rewrite a return that is already stored.
+
+Once the return is done, "do you recommend any books for me?" calls that same pick. The reply is the one title from the tool result. If nothing is left, she says so and does not name a book. A goodbye still closes the chat. Any other message asks if they need something else.
 
 When that write completes, the desk shows a download for a one-page PDF. The file is built with fpdf2 from the stored return, the order, and the customer. It is not written by the model, and it does not call a payment processor.
 
 "About a week ago" is a `placedAt` window of 5–9 days. One match is selected. Two matches are a question.
 
-`scripts/seed_empathy.py` inserts Becky's in-window horror order, Bob, and the catalog when those documents are missing. It reads `MONGODB_URI` from the environment and does not delete existing documents.
+`scripts/seed_empathy.py` inserts Becky's in-window horror order and Bob when those documents are missing, and upserts catalog titles and genres. It reads `MONGODB_URI` from the environment and does not delete existing documents.
 
 ## Requirements
 

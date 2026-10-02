@@ -22,7 +22,6 @@ from bookly_support.agent.queries import (
     get_session,
     goodwill_discount,
     list_recent_orders,
-    non_horror_catalog,
 )
 from bookly_support.agent.receipt_pdf import ReceiptFactsError, render_return_receipt
 from bookly_support.agent.recommendations import choose_recommendation
@@ -136,12 +135,12 @@ class MongoStore:
             "storeCredit": {"available": True, "refundableCents": cents, "amount": amount},
         }
 
-    def recommend_book(self, customer_id: str) -> dict:
+    def recommend_book(self, customer_id: str, seed: str) -> dict:
         owned: list[str] = []
         for document in self._db.orders.find(list_recent_orders(customer_id)):
             owned.extend(_line_titles(document))
-        catalog = list(self._db.catalog.find(non_horror_catalog()))
-        chosen = choose_recommendation(owned, catalog)
+        catalog = list(self._db.catalog.find({}, {"title": 1, "genre": 1, "author": 1}))
+        chosen = choose_recommendation(owned, catalog, seed)
         if chosen is None:
             return {"title": None, "genre": None, "author": None}
         return chosen
@@ -168,6 +167,7 @@ class MongoStore:
         now: datetime,
         reason: str | None = None,
         reason_kind: str | None = None,
+        sentiment: str | None = None,
     ) -> dict:
         existing = self._db.returns.find_one(completed_return(customer_id, order_id))
         if existing is not None:
@@ -219,6 +219,7 @@ class MongoStore:
             new_ids=_new_ids,
             reason=reason,
             reason_kind=reason_kind,
+            sentiment=sentiment,
         )
 
     def count_completed_returns(self, customer_id: str, order_id: str) -> int:
@@ -262,6 +263,7 @@ class MongoStore:
             "closedAt": None,
             "reason": None,
             "reasonKind": None,
+            "sentiment": None,
             "title": None,
             "genre": None,
         }

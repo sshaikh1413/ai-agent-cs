@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 
-def choose_recommendation(owned_titles: list[str], catalog: list[dict]) -> dict | None:
-    """One non-horror title, alphabetical, skipping books already on the account.
 
+def choose_recommendation(
+    owned_titles: list[str],
+    catalog: list[dict],
+    seed: str,
+) -> dict | None:
+    """One non-horror title, skipping books already on the account.
+
+    Remaining titles are sorted by name. The seed — an order id, or the
+    customer id when the session has no order — chooses the index. The same
+    seed always returns the same book. A different seed can return another.
     Returns None when every catalog title is horror or already owned.
     """
 
@@ -19,10 +28,22 @@ def choose_recommendation(owned_titles: list[str], catalog: list[dict]) -> dict 
         choices.append(book)
     if not choices:
         return None
-    chosen = sorted(choices, key=lambda book: str(book.get("title") or "").casefold())[0]
+    ordered = sorted(
+        choices,
+        key=lambda book: (
+            str(book.get("title") or "").casefold(),
+            str(book.get("_id") or ""),
+        ),
+    )
+    chosen = ordered[_index_for_seed(seed, len(ordered))]
     author = chosen.get("author")
     return {
         "title": str(chosen["title"]).strip(),
         "genre": str(chosen.get("genre") or "").strip(),
         "author": author.strip() if isinstance(author, str) and author.strip() else None,
     }
+
+
+def _index_for_seed(seed: str, count: int) -> int:
+    digest = hashlib.sha256((seed or "").encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") % count

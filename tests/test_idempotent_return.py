@@ -92,11 +92,13 @@ def test_completed_return_without_a_reason_is_not_backfilled() -> None:
         new_ids=lambda: ("ret_new", "rcpt_new"),
         reason="It arrived late",
         reason_kind="late_delivery",
+        sentiment="negative",
     )
     assert result["receiptId"] == "rcpt_d38bda5f54f8"
     stored = repo.returns["ret_88b425d89d8d"]
     assert "reason" not in stored
     assert "reasonKind" not in stored
+    assert "sentiment" not in stored
     assert "ret_new" not in repo.returns
 
 
