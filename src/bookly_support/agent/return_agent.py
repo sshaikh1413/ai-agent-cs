@@ -32,8 +32,9 @@ class ReturnAgent:
         customer = self.store.get_customer(customer_id)
         name = customer["name"] if customer and customer.get("name") else customer_id
         orders = self.store.list_recent_orders(customer_id)
-        if customer_id == "cust_bob" and orders:
-            follow_up = f"I want to return {orders[0]['title']}"
+        prompt_order = _newest_delivered(orders)
+        if customer_id == "cust_bob" and prompt_order:
+            follow_up = f"I want to return {prompt_order['title']}"
         else:
             follow_up = "the one from about a week ago"
         return DeskInfo(
@@ -42,6 +43,7 @@ class ReturnAgent:
             customer_name=name,
             can_help=[
                 f"Returns for {name}, who is already signed in.",
+                "Where an order is, from the status stored on that order.",
                 "Why the book is coming back, before any refund.",
                 "A refund to the original card or to store credit, after they choose.",
                 "A one-page PDF receipt after the return is written.",
@@ -58,6 +60,7 @@ class ReturnAgent:
             prompts=[
                 "I want to return a product",
                 follow_up,
+                "Where is my order",
             ],
             profile=list(PROFILE_LINES),
             opening=self._opening(customer_id),
@@ -125,6 +128,16 @@ def receipt_download(turn: Turn, customer_id: str) -> ReceiptDownload | None:
             receipt_id=receipt_id,
             url=f"/api/receipts/{receipt_id}?customer_id={customer_id}",
         )
+    return None
+
+
+def _newest_delivered(orders: list[dict]) -> dict | None:
+    """The newest delivered order. In-progress orders are not a return prompt."""
+
+    for order in orders:
+        status = order.get("status")
+        if isinstance(status, str) and status.strip().casefold() == "delivered":
+            return order
     return None
 
 

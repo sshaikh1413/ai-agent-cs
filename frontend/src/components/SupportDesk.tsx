@@ -8,6 +8,7 @@ import {
   type AgentTurn,
   type CustomerId,
   type DeskInfo,
+  type DeskOrder,
   type ReceiptDownload,
   type ToolTrace,
 } from "../agent/provider.ts"
@@ -351,6 +352,14 @@ export function SupportDesk() {
   )
 }
 
+function orderQuestion(order: DeskOrder): string {
+  const status = order.summary.split(" · ")[0]?.trim().toLowerCase()
+  if (status && status !== "delivered" && status !== "order") {
+    return `what's the status of ${order.id}`
+  }
+  return `I want to return ${order.id}`
+}
+
 function DeskPanel({
   desk,
   busy,
@@ -424,7 +433,7 @@ function DeskPanel({
                 variant="outline"
                 disabled={busy}
                 className="h-auto min-h-11 w-full justify-start whitespace-normal px-3 py-2 text-left"
-                onClick={() => onAsk(`I want to return ${order.id}`)}
+                onClick={() => onAsk(orderQuestion(order))}
               >
                 <span>
                   <span className="block font-semibold">{order.id}</span>
@@ -467,7 +476,8 @@ function EmptyThread({
       <p className="mt-4 text-base text-muted-foreground">
         Mara asks why the book is coming back, then refunds the card on file or store credit
         after {first ? `${first} chooses` : "you choose"}. The return is written only after that
-        choice, and that turn has the PDF receipt.
+        choice, and that turn has the PDF receipt. She can also say where an order is, from the
+        status stored on it.
         {name ? ` Signed in as ${name}.` : ""}
       </p>
       {desk.status === "loading" ? (

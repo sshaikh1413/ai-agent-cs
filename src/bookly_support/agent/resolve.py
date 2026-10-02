@@ -71,6 +71,75 @@ _PRONOUN_TITLE = re.compile(
 )
 
 
+_STATUS_ASK = (
+    re.compile(r"\bwhere(?:'s| is)\s+(?:my|the|this)\s+order\b"),
+    re.compile(r"\border status\b"),
+    re.compile(r"\bwhat(?:'s| is)\s+the status\b"),
+    re.compile(r"\bstatus of\b"),
+    re.compile(r"\bhas\b.{0,80}\bshipped\b"),
+    re.compile(r"\bis it out for delivery\b"),
+    re.compile(r"\b(?:is|where)\b.{0,40}\bout for delivery\b"),
+)
+
+# Customer-facing trip statuses. "delivered" is not one of these.
+_IN_PROGRESS = frozenset({"packing", "shipped", "on the way", "out for delivery"})
+
+
+def asks_order_status(text: str) -> bool:
+    """True when they ask where an order is, not why a book is coming back.
+
+    The phrases are the ones a reader uses for tracking. A refund choice and
+    a return reason do not match.
+    """
+
+    lowered = _clean(text).replace("\u2019", "'").replace("\u2018", "'")
+    return any(pattern.search(lowered) for pattern in _STATUS_ASK)
+
+
+def is_in_progress(order: dict) -> bool:
+    return _status_label(order).casefold() in _IN_PROGRESS
+
+
+def resolve_status(text: str, orders: list[dict]) -> tuple[str, list[dict]]:
+    """Pick the order a status question is about.
+
+    kind is one, several, missing, or none. A named id or title wins, including
+    a delivered order. With no name, one in-progress order is the answer and
+    two or more are a question.
+    """
+
+    mentioned = {match.upper() for match in _ORDER_ID.findall(text)}
+    if mentioned:
+        quoted = quoted_order_ids(text, orders)
+        if len(quoted) == 1 and len(mentioned) == 1:
+            return "one", quoted
+        if len(quoted) > 1:
+            return "several", quoted
+        return "missing", []
+
+    titles = title_matches(text, orders)
+    if len(titles) == 1:
+        return "one", titles
+    if len(titles) > 1:
+        return "several", titles
+    if re.search(r"\bstatus of\b", _clean(text)) and not titles:
+        return "missing", []
+
+    progress = [order for order in orders if is_in_progress(order)]
+    if len(progress) == 1:
+        return "one", progress
+    if len(progress) > 1:
+        return "several", progress
+    return "none", []
+
+
+def _status_label(order: dict) -> str:
+    status = order.get("status")
+    if not isinstance(status, str):
+        return ""
+    return status.strip()
+
+
 def book_question(text: str) -> str | None:
     """'author', 'summary', or 'both' when they ask who wrote a book or what it is about.
 

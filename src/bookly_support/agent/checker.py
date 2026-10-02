@@ -311,6 +311,56 @@ def unsupported_facts(reply: str, payload: object) -> list[str]:
 
     problems.extend(_ungrounded_author_or_plot(reply, payload, blob))
     problems.extend(_ungrounded_occasion(reply, payload))
+    problems.extend(_ungrounded_fulfillment_status(reply, blob))
+    problems.extend(_ungrounded_status_detail(reply, payload, blob))
+    return problems
+
+
+# Longer phrases first so "out for delivery" is one status, not "delivered".
+_FULFILLMENT_STATUS = (
+    "out for delivery",
+    "on the way",
+    "packing",
+    "shipped",
+    "delivered",
+)
+
+# Glue in a status reply. A place or a trip sentence is not in this set.
+_STATUS_DETAIL_STOP = _PLOT_STOP | {"order", "orders", "which"}
+
+
+def _ungrounded_fulfillment_status(reply: str, blob: str) -> list[str]:
+    """A shipment status in the draft that the tool payload did not contain."""
+
+    problems: list[str] = []
+    lowered = reply.lower()
+    for phrase in _FULFILLMENT_STATUS:
+        if re.search(rf"\b{re.escape(phrase)}\b", lowered) and phrase not in blob:
+            problems.append(phrase)
+    return problems
+
+
+def _ungrounded_status_detail(reply: str, payload: object, blob: str) -> list[str]:
+    """Content words in a status reply that are not the stored detail.
+
+    The check runs only when the payload carries a statusDetail, so a return
+    reply is left to the other fact checks.
+    """
+
+    if not _has_key(payload, "statusDetail"):
+        return []
+    problems: list[str] = []
+    for sentence in re.split(r"[.!?]+", reply):
+        words = re.findall(r"[A-Za-z']+", sentence)
+        missing = [
+            word
+            for word in words
+            if len(word) > 2
+            and word.casefold() not in _STATUS_DETAIL_STOP
+            and word.casefold() not in blob
+        ]
+        if missing:
+            problems.append(" ".join(missing))
     return problems
 
 

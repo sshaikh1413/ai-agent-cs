@@ -11,11 +11,13 @@ from bookly_support.agent.reasons import classify_reason
 from bookly_support.agent.resolve import (
     asked_title,
     asks_for_recommendation,
+    asks_order_status,
     book_question,
     destination_choice,
     is_decline,
     is_password_reset,
     resolve_order,
+    resolve_status,
 )
 from bookly_support.agent.sentiment import label_sentiment
 from bookly_support.agent.templates import (
@@ -31,7 +33,10 @@ from bookly_support.agent.templates import (
     late_apology,
     list_orders,
     missing_order,
+    no_order_in_progress,
     not_completed,
+    order_status,
+    order_status_choices,
     outside_window,
     password_refused,
     recommend_reply,
@@ -130,6 +135,8 @@ class Machine:
         subject = _about_subject(self._store, session, message) if kind else None
         if kind and subject and session.phase != "closed":
             return self._about(session, subject, kind)
+        if session.phase not in {"write", "empathy", "closed"} and asks_order_status(message):
+            return self._status(session, message, today)
         if session.phase == "done":
             return self._done(session, message, now)
         if session.phase == "write":
@@ -401,6 +408,97 @@ class Machine:
             offer.customer_reason = session.reason or ""
         return offer
 
+    def _status(self, session: Session, message: str, today: date) -> Turn:
+        """Answer from the status stored on the order. Do not start a return."""
+
+        orders = run_tool(
+            session.phase,
+            "list_recent_orders",
+            lambda: self._store.list_recent_orders(session.customer_id),
+        )
+        kind, chosen = resolve_status(message, orders)
+        if kind == "missing":
+            return Turn(
+                template=missing_order(),
+                instruction=(
+                    "The order is not on this account. Say so. "
+                    "Do not invent an order id, a status, or a place. Do not start a return."
+                ),
+                intent="order_status",
+                step="Step: order status",
+            )
+        if kind == "none":
+            return Turn(
+                template=no_order_in_progress(),
+                instruction=(
+                    "No order is still being sent. Say so. "
+                    "Do not invent an order id, a status, or a place. Do not start a return."
+                ),
+                tools=[
+                    ToolTrace(
+                        name="list_recent_orders",
+                        summary="No order is still being sent.",
+                        payload={"orders": []},
+                    )
+                ],
+                intent="order_status",
+                step="Step: order status",
+            )
+        if kind == "several":
+            public = [_status_facts(order) for order in chosen]
+            return Turn(
+                template=order_status_choices(public),
+                instruction=(
+                    "More than one order matches. Name each order id, title, and status "
+                    "from the JSON, and ask which order. Copy each status detail. "
+                    "Do not invent a status or a place. Do not start a return."
+                ),
+                tools=[
+                    ToolTrace(
+                        name="list_recent_orders",
+                        summary=f"Listed {len(public)} orders for a status question.",
+                        payload={"orders": public},
+                    )
+                ],
+                intent="order_status",
+                required=_status_required(public),
+                step="Step: order status",
+            )
+
+        selected = chosen[0]
+        detail = run_tool(
+            session.phase,
+            "get_order",
+            lambda: self._store.get_order(session.customer_id, selected["orderId"], today),
+        )
+        if detail is None:
+            return Turn(
+                template=missing_order(),
+                instruction="The order is not on this account. Say so. Do not invent an order or a status.",
+                intent="order_status",
+                step="Step: order status",
+            )
+        facts = _status_facts(detail)
+        return Turn(
+            template=order_status(facts),
+            instruction=(
+                "They asked where the order is. Copy the status and the status detail from the JSON. "
+                "Include that order id and title. "
+                "Do not name a status, an order id, or a place that is not in the JSON. "
+                "Do not start a return."
+            ),
+            tools=[
+                ToolTrace(
+                    name="get_order",
+                    summary=f"Status for {facts['orderId']}.",
+                    payload=facts,
+                )
+            ],
+            intent="order_status",
+            required=_status_required([facts]),
+            step="Step: order status",
+        )
+
     def _about(self, session: Session, title: str, kind: str) -> Turn:
         book = run_tool(
             session.phase,
@@ -539,6 +637,38 @@ class Machine:
             required=required,
             step="Step: receipt",
         )
+
+
+def _status_facts(order: dict) -> dict:
+    """The stored status fields a status reply is allowed to use.
+
+    Eligibility and the return policy stay off this payload so a draft cannot
+    borrow the word "delivered" from the policy text.
+    """
+
+    facts = {
+        "orderId": order["orderId"],
+        "title": order["title"],
+        "status": order.get("status"),
+    }
+    detail = order.get("statusDetail")
+    if isinstance(detail, str) and detail.strip():
+        facts["statusDetail"] = detail.strip()
+    return facts
+
+
+def _status_required(orders: list[dict]) -> list[str]:
+    required: list[str] = []
+    for order in orders:
+        required.append(str(order["orderId"]))
+        required.append(str(order["title"]))
+        status = order.get("status")
+        if isinstance(status, str) and status.strip():
+            required.append(status.strip())
+        detail = order.get("statusDetail")
+        if isinstance(detail, str) and detail.strip():
+            required.append(detail.strip())
+    return required
 
 
 def _public_order(order: dict) -> dict:

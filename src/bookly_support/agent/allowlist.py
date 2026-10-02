@@ -17,13 +17,17 @@ TOOL_NAMES = (
 
 Phase = str
 
+# A status question reads orders and does not start a return, including while
+# Mara is waiting for a reason or a refund choice.
+_ORDER_READS = frozenset({"list_recent_orders", "get_order", "lookup_catalog"})
+
 _ALLOWED: dict[str, frozenset[str]] = {
-    "identify_order": frozenset({"list_recent_orders", "get_order", "lookup_catalog"}),
-    "ask_reason": frozenset({"lookup_catalog"}),
+    "identify_order": _ORDER_READS,
+    "ask_reason": _ORDER_READS,
     "empathy": frozenset({"recommend_book", "issue_goodwill_discount", "lookup_catalog"}),
-    "choose_destination": frozenset({"get_refund_options", "lookup_catalog"}),
+    "choose_destination": _ORDER_READS | frozenset({"get_refund_options"}),
     "write": frozenset({"start_return", "lookup_catalog"}),
-    "done": frozenset({"recommend_book", "lookup_catalog"}),
+    "done": _ORDER_READS | frozenset({"recommend_book"}),
     "closed": frozenset(),
 }
 

@@ -43,16 +43,22 @@ def test_only_the_return_tools_exist() -> None:
     assert "start_return" not in allowed_tools("identify_order")
     assert "get_refund_options" not in allowed_tools("identify_order")
     assert "recommend_book" not in allowed_tools("identify_order")
-    assert allowed_tools("ask_reason") == frozenset({"lookup_catalog"})
+    assert allowed_tools("ask_reason") == frozenset(
+        {"list_recent_orders", "get_order", "lookup_catalog"}
+    )
     assert allowed_tools("empathy") == frozenset({"recommend_book", "lookup_catalog"})
     assert allowed_tools("empathy", "other") == frozenset({"recommend_book", "lookup_catalog"})
     assert allowed_tools("empathy", "late_delivery") == frozenset(
         {"recommend_book", "issue_goodwill_discount", "lookup_catalog"}
     )
     assert "issue_goodwill_discount" not in allowed_tools("write", "late_delivery")
-    assert allowed_tools("choose_destination") == frozenset({"get_refund_options", "lookup_catalog"})
+    assert allowed_tools("choose_destination") == frozenset(
+        {"get_refund_options", "list_recent_orders", "get_order", "lookup_catalog"}
+    )
     assert allowed_tools("write") == frozenset({"start_return", "lookup_catalog"})
-    assert allowed_tools("done") == frozenset({"recommend_book", "lookup_catalog"})
+    assert allowed_tools("done") == frozenset(
+        {"recommend_book", "lookup_catalog", "list_recent_orders", "get_order"}
+    )
     assert allowed_tools("closed") == frozenset()
 
 

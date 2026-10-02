@@ -210,6 +210,43 @@ def password_refused() -> str:
     return "I can help return a book from this account. I can't reset a password."
 
 
+def _stored_detail(order: dict) -> str:
+    detail = order.get("statusDetail")
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+    return ""
+
+
+def order_status(order: dict) -> str:
+    """One order's stored status. A delivered order says it was delivered."""
+
+    title = order["title"]
+    order_id = order["orderId"]
+    status = order.get("status")
+    label = status.strip() if isinstance(status, str) else ""
+    if label.casefold() == "delivered":
+        line = f"{title}, order {order_id}, was {label}."
+    elif label:
+        line = f"{title}, order {order_id}, is {label}."
+    else:
+        line = f"{title}, order {order_id}."
+    detail = _stored_detail(order)
+    if detail:
+        return f"{line} {detail}"
+    return line
+
+
+def order_status_choices(orders: list[dict]) -> str:
+    """Several orders. Ask which one, and name each stored status."""
+
+    lines = " ".join(order_status(order) for order in orders)
+    return f"Which order? {lines}"
+
+
+def no_order_in_progress() -> str:
+    return "I don't see an order that is still being sent."
+
+
 def opening_line(title: str, reason: str | None, customer_name: str | None = None) -> str:
     """First line of a new conversation. Title, and the stored reason only when one exists."""
 

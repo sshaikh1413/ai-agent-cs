@@ -337,7 +337,7 @@ class MongoStore:
             "paymentMethodId": document.get("paymentMethodId"),
             "genre": _genre(document),
             "deliveredLate": bool(document.get("deliveredLate")),
-        }
+        } | _status_detail(document)
 
     def _policy(self) -> dict:
         document = self._db.policies.find_one(get_policy())
@@ -422,6 +422,15 @@ def _new_discount_code() -> str:
 
 def _new_discount_id() -> str:
     return f"disc_{secrets.token_hex(6)}"
+
+
+def _status_detail(document: dict) -> dict:
+    """The stored trip sentence, when this order has one."""
+
+    detail = _optional_text(document.get("statusDetail"))
+    if detail is None:
+        return {}
+    return {"statusDetail": detail}
 
 
 def _optional_text(value: object) -> str | None:
