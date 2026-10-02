@@ -313,6 +313,73 @@ def unsupported_facts(reply: str, payload: object) -> list[str]:
     problems.extend(_ungrounded_occasion(reply, payload))
     problems.extend(_ungrounded_fulfillment_status(reply, blob))
     problems.extend(_ungrounded_status_detail(reply, payload, blob))
+    problems.extend(_ungrounded_card_refund(reply, payload))
+    problems.extend(_ungrounded_carrier(reply, blob))
+    return problems
+
+
+# A positive claim that the money is going back on the card. "cannot go back
+# on the Visa" is the refusal, and the words in front of the phrase keep it.
+_CARD_REFUND = (
+    "refund the visa",
+    "refund your visa",
+    "refunded the visa",
+    "refund the card",
+    "back on the visa",
+    "back on your visa",
+    "back on the card",
+    "onto the visa",
+    "onto the card",
+    "on the visa",
+    "on your card",
+    "on the card",
+    "original payment",
+    "visa refund",
+)
+_CARD_NEGATION = ("not ", "n't", "cannot", "can't", "won't", "no ")
+
+# Carriers this desk does not call. A name is allowed only when we stored it.
+_CARRIERS = ("fedex", "ups", "usps", "dhl")
+
+
+def _flag_true(node: object, key: str) -> bool:
+    if isinstance(node, dict):
+        if node.get(key) is True:
+            return True
+        return any(_flag_true(value, key) for value in node.values())
+    if isinstance(node, list):
+        return any(_flag_true(value, key) for value in node)
+    return False
+
+
+def _ungrounded_card_refund(reply: str, payload: object) -> list[str]:
+    """A Visa refund on a turn that may only offer store credit."""
+
+    if not _flag_true(payload, "storeCreditOnly"):
+        return []
+    lowered = reply.lower()
+    problems: list[str] = []
+    for phrase in _CARD_REFUND:
+        start = 0
+        while True:
+            index = lowered.find(phrase, start)
+            if index < 0:
+                break
+            window = lowered[max(0, index - 32) : index]
+            if not any(negation in window for negation in _CARD_NEGATION):
+                problems.append(phrase)
+                break
+            start = index + len(phrase)
+    return problems
+
+
+def _ungrounded_carrier(reply: str, blob: str) -> list[str]:
+    """A carrier name that was not stored on this return."""
+
+    problems: list[str] = []
+    for name in _CARRIERS:
+        if re.search(rf"\b{name}\b", reply, re.IGNORECASE) and name not in blob:
+            problems.append(name)
     return problems
 
 

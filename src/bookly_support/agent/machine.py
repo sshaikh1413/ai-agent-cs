@@ -8,17 +8,23 @@ from typing import Protocol
 
 from bookly_support.agent.allowlist import run_tool
 from bookly_support.agent.reasons import classify_reason
+from bookly_support.agent.eligibility import is_eligible
 from bookly_support.agent.resolve import (
+    accepts_store_credit_exception,
     asked_title,
     asks_for_recommendation,
     asks_order_status,
+    asks_too_late,
     book_question,
+    confirms_shown_order,
     destination_choice,
     is_decline,
     is_password_reset,
+    named_orders,
     resolve_order,
     resolve_status,
 )
+from bookly_support.agent.window import iso_day, spoken_date
 from bookly_support.agent.sentiment import label_sentiment
 from bookly_support.agent.templates import (
     about_book,
@@ -30,6 +36,9 @@ from bookly_support.agent.templates import (
     empathy_horror_plain,
     empathy_late,
     empathy_other,
+    delivered_window_list,
+    exception_completed,
+    exception_offer,
     late_apology,
     list_orders,
     missing_order,
@@ -39,14 +48,19 @@ from bookly_support.agent.templates import (
     order_status_choices,
     outside_window,
     password_refused,
+    past_window_why,
     recommend_reply,
     refund_choice,
+    still_sending,
     week_ambiguous,
     week_none,
 )
 
 
 class ReturnStore(Protocol):
+    def return_window_days(self) -> int:
+        """How many days the policy keeps a delivered book eligible."""
+
     def list_recent_orders(self, customer_id: str) -> list[dict]:
         """Recent orders for this customer, newest first."""
 
@@ -78,6 +92,7 @@ class ReturnStore(Protocol):
         reason: str | None = None,
         reason_kind: str | None = None,
         sentiment: str | None = None,
+        exception: bool = False,
     ) -> dict:
         """Write the return, or return the receipt already stored."""
 
@@ -104,6 +119,7 @@ class Session:
     title: str | None = None
     genre: str | None = None
     recommended_title: str | None = None
+    exception: bool = False
 
 
 @dataclass
@@ -147,9 +163,19 @@ class Machine:
             return self._reason(session, message, today, now)
         if session.phase == "empathy":
             return self._empathy_and_offer(session, today, now)
+        if session.phase == "which_book":
+            return self._which_book(session, message, today, now)
+        if session.phase == "exception_why":
+            return self._exception_why(session, message, today, now)
+        if session.phase == "exception_offer":
+            return self._exception_offer(session, message, today, now)
         return self._identify(session, message, today, now)
 
     def _done(self, session: Session, message: str, now: datetime) -> Turn:
+        if session.exception and accepts_store_credit_exception(message):
+            session.destination = "store_credit"
+            session.phase = "write"
+            return self._write(session, now.date(), now)
         if is_decline(message):
             session.phase = "closed"
             session.closed_at = now
@@ -206,13 +232,14 @@ class Machine:
         )
 
     def _identify(self, session: Session, message: str, today: date, now: datetime) -> Turn:
-        del now
         if is_password_reset(message):
             return Turn(
                 template=password_refused(),
                 instruction="Say, in English, that this desk can help with a return and cannot reset a password.",
                 intent="out_of_scope",
             )
+        if asks_too_late(message):
+            return self._too_late(session, message, today, now)
 
         orders = run_tool(
             session.phase,
@@ -277,23 +304,7 @@ class Machine:
                 required=[detail["title"], detail["orderId"]],
             )
 
-        session.order_id = detail["orderId"]
-        session.title = detail["title"]
-        genre = str(detail.get("genre") or "").strip().lower()
-        session.genre = genre or None
-        session.phase = "ask_reason"
-        return Turn(
-            template=ask_reason({"title": detail["title"], "orderId": detail["orderId"]}),
-            instruction=(
-                "Ask why they want to return this book. "
-                "Do not offer a refund yet. Do not recommend a book. "
-                "Do not mention a percent or a discount code. "
-                "Do not say a return has started."
-            ),
-            tools=[listed, opened],
-            required=[detail["title"], detail["orderId"]],
-            step="Step: why it's coming back",
-        )
+        return self._ask_why(session, detail, [listed, opened])
 
     def _reason(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         if is_password_reset(message):
@@ -594,6 +605,7 @@ class Machine:
         if session.order_id is None or session.destination is None:
             session.phase = "choose_destination"
             return self._offer(session, [])
+        exception = bool(session.exception) and session.destination == "store_credit"
         result = run_tool(
             "write",
             "start_return",
@@ -606,6 +618,7 @@ class Machine:
                 reason=session.reason,
                 reason_kind=session.reason_kind,
                 sentiment=session.sentiment,
+                exception=exception,
             ),
         )
         wrote = ToolTrace(
@@ -622,6 +635,22 @@ class Machine:
             )
         session.phase = "done"
         session.return_id = result.get("returnId")
+        if result.get("exception"):
+            return Turn(
+                template=exception_completed(result),
+                instruction=(
+                    "The write returned status completed as store credit. "
+                    "Confirm the store credit, the amount, and the receipt id from the JSON. "
+                    "Say the receipt and the parcel label are ready. "
+                    "Do not say the Visa was refunded. "
+                    "Do not name a carrier that is not in the JSON. "
+                    "Do not invent a download address. "
+                    "Then ask if they need anything else."
+                ),
+                tools=[wrote],
+                required=[result["receiptId"], result["title"], result["amount"], "store credit"],
+                step="Step: receipt and label",
+            )
         required = [result["receiptId"], result["title"], result["amount"]]
         if result.get("last4"):
             required.append(str(result["last4"]))
@@ -636,6 +665,249 @@ class Machine:
             tools=[wrote],
             required=required,
             step="Step: receipt",
+        )
+
+    def _ask_why(self, session: Session, detail: dict, tools: list[ToolTrace]) -> Turn:
+        session.exception = False
+        session.order_id = detail["orderId"]
+        session.title = detail["title"]
+        genre = str(detail.get("genre") or "").strip().lower()
+        session.genre = genre or None
+        session.phase = "ask_reason"
+        return Turn(
+            template=ask_reason({"title": detail["title"], "orderId": detail["orderId"]}),
+            instruction=(
+                "Ask why they want to return this book. "
+                "Do not offer a refund yet. Do not recommend a book. "
+                "Do not mention a percent or a discount code. "
+                "Do not say a return has started."
+            ),
+            tools=tools,
+            required=[detail["title"], detail["orderId"]],
+            step="Step: why it's coming back",
+        )
+
+    def _too_late(self, session: Session, message: str, today: date, now: datetime) -> Turn:
+        del now
+        orders, listed = self._listed(session)
+        chosen = named_orders(message, orders)
+        if len(chosen) == 1:
+            return self._open_window(session, chosen[0], today, listed)
+        return self._window_list(session, orders, today, listed)
+
+    def _which_book(self, session: Session, message: str, today: date, now: datetime) -> Turn:
+        del now
+        if is_password_reset(message):
+            return Turn(
+                template=password_refused(),
+                instruction="Say, in English, that this desk can help with a return and cannot reset a password.",
+                intent="out_of_scope",
+                step="Step: which book",
+            )
+        orders, listed = self._listed(session)
+        delivered = [order for order in orders if _is_delivered(order)]
+        chosen = named_orders(message, orders)
+        if len(chosen) == 1:
+            return self._open_window(session, chosen[0], today, listed)
+        if len(delivered) == 1 and confirms_shown_order(message):
+            return self._open_window(session, delivered[0], today, listed)
+        return self._window_list(session, orders, today, listed)
+
+    def _exception_why(self, session: Session, message: str, today: date, now: datetime) -> Turn:
+        del today
+        if is_password_reset(message):
+            return Turn(
+                template=password_refused(),
+                instruction="Say, in English, that this desk can help with a return and cannot reset a password.",
+                intent="out_of_scope",
+                step="Step: what happened",
+            )
+        if session.order_id is None or not session.title:
+            session.phase = "which_book"
+            return self._which_book(session, message, now.date(), now)
+        session.reason = message.strip()
+        session.reason_kind = classify_reason(session.reason)
+        session.sentiment = label_sentiment(session.reason)
+        session.phase = "exception_offer"
+        return self._offer_exception(session)
+
+    def _exception_offer(self, session: Session, message: str, today: date, now: datetime) -> Turn:
+        if accepts_store_credit_exception(message):
+            session.destination = "store_credit"
+            session.exception = True
+            session.phase = "write"
+            return self._write(session, today, now)
+        return self._offer_exception(session)
+
+    def _offer_exception(self, session: Session) -> Turn:
+        if session.order_id is None:
+            raise RuntimeError("an exception offer requires an order")
+        options = run_tool(
+            session.phase,
+            "get_refund_options",
+            lambda: self._store.get_refund_options(session.customer_id, session.order_id or ""),
+        )
+        if options is None:
+            session.phase = "which_book"
+            session.order_id = None
+            return Turn(
+                template=missing_order(),
+                instruction="The order is not on this account. Say so.",
+                step="Step: which book",
+            )
+        payload = {
+            "orderId": options["orderId"],
+            "title": options["title"],
+            "amount": options["amount"],
+            "refundableCents": options["refundableCents"],
+            "destination": "store_credit",
+            "refund": "store credit",
+            "exception": True,
+            "storeCreditOnly": True,
+            "cardOffered": False,
+        }
+        return Turn(
+            template=exception_offer(payload),
+            instruction=(
+                "Offer only a one-time store-credit exception for the amount in the JSON. "
+                "Ask if that is acceptable. Do not offer the card, the Visa, or original payment."
+            ),
+            tools=[
+                ToolTrace(
+                    name="get_refund_options",
+                    summary=f"Store credit exception for {payload['orderId']}.",
+                    payload=payload,
+                )
+            ],
+            required=[payload["title"], payload["amount"], "store credit"],
+            step="Step: store credit exception",
+        )
+
+    def _listed(self, session: Session) -> tuple[list[dict], ToolTrace]:
+        orders = run_tool(
+            session.phase,
+            "list_recent_orders",
+            lambda: self._store.list_recent_orders(session.customer_id),
+        )
+        listed = ToolTrace(
+            name="list_recent_orders",
+            summary=f"Listed {len(orders)} recent orders.",
+            payload={"orders": [_public_order(order) for order in orders]},
+        )
+        return orders, listed
+
+    def _window_list(
+        self,
+        session: Session,
+        orders: list[dict],
+        today: date,
+        listed: ToolTrace,
+    ) -> Turn:
+        days = self._store.return_window_days()
+        marked = [_window_order(order, today, days) for order in orders if _is_delivered(order)]
+        listed.payload = {"orders": marked}
+        listed.summary = f"Listed {len(marked)} delivered orders with the return window."
+        session.phase = "which_book"
+        session.exception = False
+        required: list[str] = []
+        for order in marked:
+            required.append(order["title"])
+            required.append(order["deliveredLabel"])
+        return Turn(
+            template=delivered_window_list(marked),
+            instruction=(
+                "They asked if it is too late and did not name a book. "
+                "Name each delivered title, its delivery date, and whether it is inside "
+                "the return window or past it. Use only the dates and titles in the JSON. "
+                "Do not mention a book that is still packing or on the way. "
+                "Do not recite a stored reason. Do not say a return has started. "
+                "Ask which book."
+            ),
+            tools=[listed],
+            required=required,
+            step="Step: which book",
+        )
+
+    def _open_window(self, session: Session, selected: dict, today: date, listed: ToolTrace) -> Turn:
+        detail = run_tool(
+            session.phase,
+            "get_order",
+            lambda: self._store.get_order(session.customer_id, selected["orderId"], today),
+        )
+        if detail is None:
+            return Turn(
+                template=missing_order(),
+                instruction="The order is not on this account. Say so. Do not invent an order.",
+                tools=[listed],
+                step="Step: which book",
+            )
+        opened = ToolTrace(
+            name="get_order",
+            summary=f"Opened {detail['orderId']}.",
+            payload=_public_order(detail)
+            | {
+                "eligible": detail["eligible"],
+                "returnWindowDays": detail["returnWindowDays"],
+                "policy": detail["policy"],
+            },
+        )
+        if not _is_delivered(detail):
+            session.phase = "which_book"
+            return Turn(
+                template=still_sending(detail),
+                instruction=(
+                    "This order has not been delivered. Say the status from the JSON. "
+                    "Say it is not past the return window. Do not start a return."
+                ),
+                tools=[listed, opened],
+                required=[
+                    detail["title"],
+                    detail["orderId"],
+                    *(
+                        [str(detail["status"]).strip()]
+                        if isinstance(detail.get("status"), str) and str(detail["status"]).strip()
+                        else []
+                    ),
+                ],
+                step="Step: which book",
+            )
+        if detail["eligible"]:
+            return self._ask_why(session, detail, [listed, opened])
+        label = ""
+        delivered = detail.get("deliveredAt")
+        if isinstance(delivered, datetime):
+            label = spoken_date(delivered)
+            opened.payload["deliveredOn"] = iso_day(delivered)
+            opened.payload["deliveredLabel"] = label
+        elif isinstance(detail.get("deliveredAt"), str):
+            opened.payload["deliveredOn"] = str(detail["deliveredAt"])[:10]
+        opened.payload["window"] = "past"
+        opened.payload["cardBrand"] = "Visa"
+        opened.payload["storeCreditOnly"] = True
+        session.exception = True
+        session.order_id = detail["orderId"]
+        session.title = detail["title"]
+        genre = str(detail.get("genre") or "").strip().lower()
+        session.genre = genre or None
+        session.phase = "exception_why"
+        shown = {
+            "title": detail["title"],
+            "orderId": detail["orderId"],
+            "returnWindowDays": detail["returnWindowDays"],
+            "deliveredLabel": label,
+        }
+        required = [detail["title"], detail["orderId"], str(detail["returnWindowDays"])]
+        if label:
+            required.append(label)
+        return Turn(
+            template=past_window_why(shown),
+            instruction=(
+                "Say yes, this book is past the 30-day window, so it cannot go back on the Visa. "
+                "Ask what happened with it. Do not offer store credit, a card refund, or any amount yet."
+            ),
+            tools=[listed, opened],
+            required=required,
+            step="Step: what happened",
         )
 
 
@@ -669,6 +941,25 @@ def _status_required(orders: list[dict]) -> list[str]:
         if isinstance(detail, str) and detail.strip():
             required.append(detail.strip())
     return required
+
+
+def _is_delivered(order: dict) -> bool:
+    status = order.get("status")
+    if not isinstance(status, str) or status.strip().casefold() != "delivered":
+        return False
+    return isinstance(order.get("deliveredAt"), datetime)
+
+
+def _window_order(order: dict, today: date, days: int) -> dict:
+    delivered = order.get("deliveredAt")
+    if not isinstance(delivered, datetime):
+        raise RuntimeError("a delivered order needs a delivery date")
+    public = _public_order(order)
+    public["deliveredOn"] = iso_day(delivered)
+    public["deliveredLabel"] = spoken_date(delivered)
+    public["window"] = "inside" if is_eligible(delivered, today, days) else "past"
+    public["returnWindowDays"] = days
+    return public
 
 
 def _public_order(order: dict) -> dict:

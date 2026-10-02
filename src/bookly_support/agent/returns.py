@@ -22,6 +22,18 @@ class ReturnRepository(Protocol):
         """Insert both documents, or raise DuplicateReturn."""
 
 
+def return_permitted(*, eligible: bool, destination: str, exception: bool) -> bool:
+    """An order outside the window can be written only as store credit.
+
+    The exception flag does not open a card refund. An eligible order is
+    unchanged: Visa or store credit, with no exception required.
+    """
+
+    if eligible:
+        return True
+    return bool(exception) and destination == "store_credit"
+
+
 def format_amount(cents: int) -> str:
     sign = "-" if cents < 0 else ""
     amount = abs(cents)
@@ -33,7 +45,7 @@ def utc_now() -> datetime:
 
 
 def _completed(return_doc: dict, receipt_doc: dict) -> dict:
-    return {
+    result = {
         "status": "completed",
         "returnId": return_doc["_id"],
         "receiptId": receipt_doc["_id"],
@@ -46,6 +58,20 @@ def _completed(return_doc: dict, receipt_doc: dict) -> dict:
         "brand": receipt_doc.get("brand"),
         "last4": receipt_doc.get("last4"),
     }
+    if return_doc.get("exception"):
+        result["exception"] = True
+        result["storeCreditOnly"] = True
+        result["refund"] = "store credit"
+        tracking = return_doc.get("trackingNumber")
+        carrier = return_doc.get("carrier")
+        label_id = return_doc.get("labelId")
+        if isinstance(tracking, str) and tracking.strip():
+            result["trackingNumber"] = tracking.strip()
+        if isinstance(carrier, str) and carrier.strip():
+            result["carrier"] = carrier.strip()
+        if isinstance(label_id, str) and label_id.strip():
+            result["labelId"] = label_id.strip()
+    return result
 
 
 def commit_return(
@@ -63,6 +89,10 @@ def commit_return(
     reason: str | None = None,
     reason_kind: str | None = None,
     sentiment: str | None = None,
+    exception: bool = False,
+    tracking_number: str | None = None,
+    carrier: str | None = None,
+    label_id: str | None = None,
 ) -> dict:
     """Insert a return and its receipt, or return the ones already stored."""
 
@@ -87,6 +117,14 @@ def commit_return(
         "reasonKind": reason_kind,
         "sentiment": sentiment,
     }
+    if exception:
+        return_doc["exception"] = True
+        if isinstance(tracking_number, str) and tracking_number.strip():
+            return_doc["trackingNumber"] = tracking_number.strip()
+        if isinstance(carrier, str) and carrier.strip():
+            return_doc["carrier"] = carrier.strip()
+        if isinstance(label_id, str) and label_id.strip():
+            return_doc["labelId"] = label_id.strip()
     receipt_doc = {
         "_id": receipt_id,
         "returnId": return_id,

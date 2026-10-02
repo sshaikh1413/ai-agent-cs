@@ -20,7 +20,8 @@ from bookly_support.agent.recommendations import choose_recommendation
 from bookly_support.agent.resolve import longest_catalog_title
 from bookly_support.agent.return_agent import receipt_download
 from bookly_support.agent.sentiment import label_sentiment
-from bookly_support.agent.returns import commit_return
+from bookly_support.agent.label_pdf import CARRIER_NAME
+from bookly_support.agent.returns import commit_return, return_permitted
 
 TODAY = date(2026, 10, 1)
 NOW = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
@@ -205,6 +206,12 @@ class FakeStore:
         self.calls: list[str] = []
         self._discount_codes_used: list[str] = []
         self.last_seed: str | None = None
+        self.labels: dict[str, dict] = {}
+        self.customer_name = "Becky Alvarez"
+        self.address = "418 Linden Street, Oakland, CA 94607"
+
+    def return_window_days(self) -> int:
+        return 30
 
     def list_recent_orders(self, customer_id: str) -> list[dict]:
         assert customer_id == self.customer_id
@@ -218,7 +225,12 @@ class FakeStore:
         if order is None:
             return None
         detail = dict(order)
-        detail["eligible"] = is_eligible(detail["deliveredAt"], today, 30)
+        delivered = detail.get("deliveredAt")
+        detail["eligible"] = is_eligible(
+            delivered if isinstance(delivered, datetime) else None,
+            today,
+            30,
+        )
         detail["returnWindowDays"] = 30
         detail["policy"] = "Delivered books can be returned within 30 days."
         return detail
@@ -298,25 +310,54 @@ class FakeStore:
         reason: str | None = None,
         reason_kind: str | None = None,
         sentiment: str | None = None,
+        exception: bool = False,
     ) -> dict:
         assert customer_id == self.customer_id
         self.calls.append("start_return")
         order = next(item for item in self.orders if item["orderId"] == order_id)
-        return commit_return(
+        delivered = order.get("deliveredAt")
+        eligible = is_eligible(delivered if isinstance(delivered, datetime) else None, today, 30)
+        if not return_permitted(eligible=eligible, destination=destination, exception=exception):
+            return {
+                "status": "not_completed",
+                "reason": "ineligible",
+                "orderId": order_id,
+                "title": order["title"],
+            }
+        card = destination == "original_payment"
+        exception_write = exception and destination == "store_credit"
+        result = commit_return(
             self.repo,
             customer_id=customer_id,
             order_id=order_id,
             destination=destination,
             title=order["title"],
             amount_cents=int(order["refundableCents"]),
-            brand="Visa",
-            last4="4242",
+            brand="Visa" if card else None,
+            last4="4242" if card else None,
             now=now,
             new_ids=lambda: ("ret_fixed", "rcpt_fixed"),
             reason=reason,
             reason_kind=reason_kind,
             sentiment=sentiment,
+            exception=exception_write,
+            tracking_number="BKLY18440TEST" if exception_write else None,
+            carrier=CARRIER_NAME if exception_write else None,
+            label_id="lbl_fixed" if exception_write else None,
         )
+        if result.get("status") == "completed" and result.get("exception"):
+            result["address"] = self.address
+            self.labels[str(result["labelId"])] = {
+                "_id": result["labelId"],
+                "customerId": customer_id,
+                "returnId": result["returnId"],
+                "orderId": order_id,
+                "trackingNumber": result["trackingNumber"],
+                "carrier": result["carrier"],
+                "name": self.customer_name,
+                "address": self.address,
+            }
+        return result
 
 
 def _becky_store() -> FakeStore:

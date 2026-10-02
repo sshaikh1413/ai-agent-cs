@@ -247,6 +247,71 @@ def no_order_in_progress() -> str:
     return "I don't see an order that's still on its way."
 
 
+def delivered_window_list(orders: list[dict]) -> str:
+    """Delivered books only, each marked inside the window or past it."""
+
+    if not orders:
+        return "I don't see a delivered book on this account, so nothing is past the return window."
+    parts = [_window_line(order) for order in orders]
+    if len(parts) == 1:
+        listed = parts[0]
+    elif len(parts) == 2:
+        listed = f"{parts[0]}, and {parts[1]}"
+    else:
+        listed = ", ".join(parts[:-1]) + ", and " + parts[-1]
+    return (
+        "These are the books that have been delivered. "
+        f"{listed}. Which book did you mean?"
+    )
+
+
+def _window_line(order: dict) -> str:
+    days = order["returnWindowDays"]
+    place = "past" if order.get("window") == "past" else "inside"
+    return (
+        f"{order['title']}, order {order['orderId']}, delivered {order['deliveredLabel']}, "
+        f"is {place} the {days} days"
+    )
+
+
+def past_window_why(order: dict) -> str:
+    """The old book cannot go back on the Visa. Money is not offered yet."""
+
+    return (
+        f"Yes. {order['title']}, order {order['orderId']}, delivered {order['deliveredLabel']}, "
+        f"is past the {order['returnWindowDays']} days, so it cannot go back on the Visa. "
+        "What happened with it?"
+    )
+
+
+def still_sending(order: dict) -> str:
+    """Packing or on the way is not past the return window."""
+
+    status = order.get("status") or "still being sent"
+    return (
+        f"{order['title']}, order {order['orderId']}, is {status}. "
+        "It hasn't arrived, so it isn't past the return window."
+    )
+
+
+def exception_offer(options: dict) -> str:
+    """One offer: store credit for the refundable amount. The card is not offered."""
+
+    return (
+        f"I can make a one-time store credit exception for {options['amount']} "
+        f"on {options['title']}, order {options['orderId']}. Is that acceptable?"
+    )
+
+
+def exception_completed(receipt: dict) -> str:
+    return (
+        f"Your return is complete. Receipt {receipt['receiptId']} for {receipt['title']} "
+        f"is {receipt['amount']} in store credit. "
+        "The receipt and the parcel label are ready to download. "
+        "Anything else I can help with?"
+    )
+
+
 def opening_line(customer_name: str | None = None) -> str:
     """A welcome. The stored reason stays out of this sentence."""
 

@@ -72,6 +72,7 @@ def desk(request: Request, customer_id: str | None = None) -> DeskInfo:
 
 
 _RECEIPT_ID = re.compile(r"rcpt_[a-z0-9]+")
+_LABEL_ID = re.compile(r"lbl_[a-z0-9]+")
 
 
 @app.get("/api/receipts/{receipt_id}")
@@ -85,7 +86,24 @@ def receipt_pdf(receipt_id: str, customer_id: str | None = None) -> Response:
         content=pdf,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{receipt_id}.pdf"',
+            "Content-Disposition": f'inline; filename="{receipt_id}.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/api/labels/{label_id}")
+def label_pdf(label_id: str, customer_id: str | None = None) -> Response:
+    if _LABEL_ID.fullmatch(label_id) is None:
+        raise HTTPException(status_code=404, detail="That label isn't on this account.")
+    pdf = get_agent().store.return_label_pdf(_customer(customer_id), label_id)
+    if pdf is None:
+        raise HTTPException(status_code=404, detail="That label isn't on this account.")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{label_id}.pdf"',
             "Cache-Control": "no-store",
         },
     )

@@ -11,11 +11,19 @@ from pymongo.errors import DuplicateKeyError
 from bookly_support.agent.discounts import DuplicateDiscount
 from bookly_support.agent.discounts import issue_goodwill_discount as commit_discount
 from bookly_support.agent.eligibility import is_eligible
+from bookly_support.agent.label_pdf import (
+    CARRIER_NAME,
+    LabelFactsError,
+    customer_address_lines,
+    customer_address_text,
+    render_parcel_label,
+)
 from bookly_support.agent.queries import (
     completed_return,
     completed_return_by_id,
     customer_memory as memory_for_customer,
     get_customer,
+    get_label,
     get_order,
     get_payment_method,
     get_policy,
@@ -28,7 +36,7 @@ from bookly_support.agent.queries import (
 from bookly_support.agent.receipt_pdf import ReceiptFactsError, render_return_receipt
 from bookly_support.agent.recommendations import choose_recommendation
 from bookly_support.agent.resolve import longest_catalog_title
-from bookly_support.agent.returns import DuplicateReturn, commit_return
+from bookly_support.agent.returns import DuplicateReturn, commit_return, return_permitted
 
 RECENT_LIMIT = 10
 
@@ -80,6 +88,11 @@ class MongoStore:
             unique=True,
             name="uniq_customer_memory",
         )
+        self._db.labels.create_index(
+            [("returnId", 1)],
+            unique=True,
+            name="uniq_label_return",
+        )
 
     def close(self) -> None:
         self._client.close()
@@ -93,6 +106,11 @@ class MongoStore:
             "name": document.get("name") or "",
             "email": document.get("email") or "",
         }
+
+    def return_window_days(self) -> int:
+        """Policy length used to mark a delivered book inside or past the window."""
+
+        return self._policy()["returnWindowDays"]
 
     def list_recent_orders(self, customer_id: str) -> list[dict]:
         cursor = (
@@ -204,6 +222,7 @@ class MongoStore:
         reason: str | None = None,
         reason_kind: str | None = None,
         sentiment: str | None = None,
+        exception: bool = False,
     ) -> dict:
         existing = self._db.returns.find_one(completed_return(customer_id, order_id))
         if existing is not None:
@@ -214,7 +233,8 @@ class MongoStore:
             return {"status": "not_completed", "reason": "missing_order", "orderId": order_id}
         policy = self._policy()
         delivered = _aware(document.get("deliveredAt"))
-        if not is_eligible(delivered, today, policy["returnWindowDays"]):
+        eligible = is_eligible(delivered, today, policy["returnWindowDays"])
+        if not return_permitted(eligible=eligible, destination=destination, exception=exception):
             return {
                 "status": "not_completed",
                 "reason": "ineligible",
@@ -242,7 +262,14 @@ class MongoStore:
         if destination != "original_payment":
             safe_last4 = None
             safe_brand = None
-        return commit_return(
+        tracking = None
+        carrier = None
+        label_id = None
+        if exception and destination == "store_credit":
+            tracking = _new_tracking()
+            carrier = CARRIER_NAME
+            label_id = _new_label_id()
+        result = commit_return(
             _MongoReturns(self._db),
             customer_id=customer_id,
             order_id=document["_id"],
@@ -256,7 +283,17 @@ class MongoStore:
             reason=reason,
             reason_kind=reason_kind,
             sentiment=sentiment,
+            exception=exception and destination == "store_credit",
+            tracking_number=tracking,
+            carrier=carrier,
+            label_id=label_id,
         )
+        if result.get("status") == "completed" and result.get("exception"):
+            self._ensure_label(customer_id, result)
+            address = self._address_text(customer_id)
+            if address:
+                result["address"] = address
+        return result
 
     def latest_completed_return(self, customer_id: str) -> dict | None:
         """Newest completed return for this customer: stored title, and reason text if any."""
@@ -316,6 +353,41 @@ class MongoStore:
             return None
         return self._db.receipts.find_one(get_receipt(customer_id, existing["receiptId"]))
 
+    def return_label_pdf(self, customer_id: str, label_id: str) -> bytes | None:
+        """PDF for a parcel label already stored for this customer."""
+
+        label = self._db.labels.find_one(get_label(customer_id, label_id))
+        if label is None:
+            return None
+        return_id = label.get("returnId")
+        if not isinstance(return_id, str) or not return_id:
+            return None
+        return_doc = self._db.returns.find_one(completed_return_by_id(customer_id, return_id))
+        customer = self._db.customers.find_one(get_customer(customer_id))
+        order_id = label.get("orderId")
+        if return_doc is None or customer is None or not isinstance(order_id, str):
+            return None
+        order = self._db.orders.find_one(get_order(customer_id, order_id))
+        if order is None:
+            return None
+        tracking = return_doc.get("trackingNumber") or label.get("trackingNumber")
+        carrier = return_doc.get("carrier") or label.get("carrier")
+        name = customer.get("name")
+        try:
+            lines = customer_address_lines(customer)
+            if not isinstance(tracking, str) or not isinstance(carrier, str) or not isinstance(name, str):
+                return None
+            return render_parcel_label(
+                name=name,
+                address_lines=lines,
+                carrier=carrier,
+                tracking_number=tracking,
+                order_id=order_id,
+                title=_title(order),
+            )
+        except LabelFactsError:
+            return None
+
     def return_receipt_pdf(self, customer_id: str, receipt_id: str) -> bytes | None:
         """PDF for a completed return already stored for this customer."""
 
@@ -352,6 +424,7 @@ class MongoStore:
             "title": None,
             "genre": None,
             "recommendedTitle": None,
+            "exception": False,
         }
         self._db.sessions.insert_one(document)
         return document
@@ -416,7 +489,7 @@ class MongoStore:
                 "orderId": existing.get("orderId"),
             }
         cents = int(receipt["amountCents"])
-        return {
+        result = {
             "status": "completed",
             "returnId": existing["_id"],
             "receiptId": receipt["_id"],
@@ -429,6 +502,56 @@ class MongoStore:
             "brand": receipt.get("brand"),
             "last4": receipt.get("last4"),
         }
+        if existing.get("exception"):
+            result["exception"] = True
+            result["storeCreditOnly"] = True
+            result["refund"] = "store credit"
+            tracking = existing.get("trackingNumber")
+            carrier = existing.get("carrier")
+            label_id = existing.get("labelId")
+            if isinstance(tracking, str) and tracking.strip():
+                result["trackingNumber"] = tracking.strip()
+            if isinstance(carrier, str) and carrier.strip():
+                result["carrier"] = carrier.strip()
+            if isinstance(label_id, str) and label_id.strip():
+                result["labelId"] = label_id.strip()
+            address = self._address_text(customer_id)
+            if address:
+                result["address"] = address
+            self._ensure_label(customer_id, result)
+        return result
+
+    def _ensure_label(self, customer_id: str, result: dict) -> None:
+        label_id = result.get("labelId")
+        tracking = result.get("trackingNumber")
+        carrier = result.get("carrier")
+        return_id = result.get("returnId")
+        order_id = result.get("orderId")
+        if not all(isinstance(value, str) and value for value in (label_id, tracking, carrier, return_id, order_id)):
+            return
+        self._db.labels.update_one(
+            {"customerId": customer_id, "returnId": return_id},
+            {
+                "$setOnInsert": {
+                    "_id": label_id,
+                    "customerId": customer_id,
+                    "returnId": return_id,
+                    "orderId": order_id,
+                    "trackingNumber": tracking,
+                    "carrier": carrier,
+                }
+            },
+            upsert=True,
+        )
+
+    def _address_text(self, customer_id: str) -> str | None:
+        customer = self._db.customers.find_one(get_customer(customer_id))
+        if customer is None:
+            return None
+        try:
+            return customer_address_text(customer)
+        except LabelFactsError:
+            return None
 
 
 class _MongoReturns:
@@ -453,6 +576,14 @@ class _MongoReturns:
 
 def _new_ids() -> tuple[str, str]:
     return f"ret_{secrets.token_hex(6)}", f"rcpt_{secrets.token_hex(6)}"
+
+
+def _new_label_id() -> str:
+    return f"lbl_{secrets.token_hex(6)}"
+
+
+def _new_tracking() -> str:
+    return f"BKLY{secrets.token_hex(5).upper()}"
 
 
 def _new_discount_code() -> str:

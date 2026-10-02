@@ -12,7 +12,9 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 
-RETURNABLE_ORDER_IDS = frozenset({"BLY-22018", "BLY-22002", "BLY-22044", "BLY-33010"})
+RETURNABLE_ORDER_IDS = frozenset(
+    {"BLY-22018", "BLY-22002", "BLY-22044", "BLY-33010", "BLY-18440"}
+)
 PROTECTED_ORDER_IDS = ("BLY-44120", "BLY-44121", "BLY-44122", "BLY-44123")
 
 
@@ -24,6 +26,7 @@ class DemoResetPlan:
     return_ids: tuple[str, ...]
     receipt_ids: tuple[str, ...]
     discount_ids: tuple[str, ...]
+    label_ids: tuple[str, ...]
 
 
 def plan_demo_reset(
@@ -32,6 +35,7 @@ def plan_demo_reset(
     receipts: list[dict],
     discounts: list[dict],
     orders: list[dict],
+    labels: list[dict] | None = None,
 ) -> DemoResetPlan:
     """Choose what a reset removes. Memory is only the reason they actually stored."""
 
@@ -67,12 +71,22 @@ def plan_demo_reset(
         for discount in discounts
         if isinstance(discount.get("_id"), str) and discount.get("orderId") in RETURNABLE_ORDER_IDS
     ]
+    label_ids = [
+        label["_id"]
+        for label in labels or []
+        if isinstance(label.get("_id"), str)
+        and (
+            label.get("returnId") in removed
+            or label.get("orderId") in RETURNABLE_ORDER_IDS
+        )
+    ]
     upserts = tuple(record for _, record in chosen.values())
     return DemoResetPlan(
         memory_upserts=upserts,
         return_ids=tuple(return_ids),
         receipt_ids=tuple(receipt_ids),
         discount_ids=tuple(discount_ids),
+        label_ids=tuple(label_ids),
     )
 
 
@@ -113,11 +127,14 @@ def reset_bookly_demo(database) -> dict[str, int | str]:
     receipts = list(database.receipts.find({}))
     discounts = list(database.discounts.find({}))
     orders = list(database.orders.find({}))
+    labels_collection = getattr(database, "labels", None)
+    labels = list(labels_collection.find({})) if labels_collection is not None else []
     plan = plan_demo_reset(
         returns=returns,
         receipts=receipts,
         discounts=discounts,
         orders=orders,
+        labels=labels,
     )
 
     for record in plan.memory_upserts:
@@ -129,6 +146,8 @@ def reset_bookly_demo(database) -> dict[str, int | str]:
     database.returns.delete_many({"_id": {"$in": list(plan.return_ids)}})
     database.receipts.delete_many({"_id": {"$in": list(plan.receipt_ids)}})
     database.discounts.delete_many({"_id": {"$in": list(plan.discount_ids)}})
+    if labels_collection is not None:
+        labels_collection.delete_many({"_id": {"$in": list(plan.label_ids)}})
     database.sessions.delete_many({})
 
     if _snapshot(database.orders) != orders_before:

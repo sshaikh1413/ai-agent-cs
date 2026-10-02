@@ -13,6 +13,7 @@ from bookly_support.agent.provider import (
     ChatRequest,
     DeskInfo,
     DeskOrder,
+    ParcelLabel,
     ReceiptDownload,
     ToolTrace,
 )
@@ -47,6 +48,8 @@ class ReturnAgent:
                 "Why the book is coming back, before any refund.",
                 "A refund to the original card or to store credit, after they choose.",
                 "A one-page PDF receipt after the return is written.",
+                "A too-late question lists delivered books and whether each is inside the 30 days.",
+                "A past-window book can be a one-time store-credit exception, with a receipt and a parcel label.",
             ],
             sample_orders=[
                 DeskOrder(
@@ -81,6 +84,7 @@ class ReturnAgent:
             tools=[ToolTrace(name=tool.name, summary=tool.summary) for tool in turn.tools],  # type: ignore[arg-type]
             conversation_id=session.id,
             receipt=receipt_download(turn, customer_id),
+            label=label_download(turn, customer_id),
             step=turn.step,
             opening=_welcome(prior, memory, name) if started else None,
         )
@@ -125,6 +129,7 @@ class ReturnAgent:
 
 
 _RECEIPT_ID = re.compile(r"rcpt_[a-z0-9]+")
+_LABEL_ID = re.compile(r"lbl_[a-z0-9]+")
 
 
 def receipt_download(turn: Turn, customer_id: str) -> ReceiptDownload | None:
@@ -142,6 +147,25 @@ def receipt_download(turn: Turn, customer_id: str) -> ReceiptDownload | None:
         return ReceiptDownload(
             receipt_id=receipt_id,
             url=f"/api/receipts/{receipt_id}?customer_id={customer_id}",
+        )
+    return None
+
+
+def label_download(turn: Turn, customer_id: str) -> ParcelLabel | None:
+    """Link for the parcel label written with a store-credit exception."""
+
+    for tool in turn.tools:
+        if tool.name != "start_return":
+            continue
+        payload = tool.payload
+        if payload.get("status") != "completed" or not payload.get("exception"):
+            continue
+        label_id = payload.get("labelId")
+        if not isinstance(label_id, str) or _LABEL_ID.fullmatch(label_id) is None:
+            continue
+        return ParcelLabel(
+            label_id=label_id,
+            url=f"/api/labels/{label_id}?customer_id={customer_id}",
         )
     return None
 
@@ -236,6 +260,7 @@ def _session(document: dict) -> Session:
         title=document.get("title"),
         genre=document.get("genre"),
         recommended_title=document.get("recommendedTitle"),
+        exception=bool(document.get("exception")),
     )
 
 
@@ -254,4 +279,5 @@ def _session_doc(session: Session) -> dict:
         "title": session.title,
         "genre": session.genre,
         "recommendedTitle": session.recommended_title,
+        "exception": session.exception,
     }

@@ -23,6 +23,9 @@ _ORDER_READS = frozenset({"list_recent_orders", "get_order", "lookup_catalog"})
 
 _ALLOWED: dict[str, frozenset[str]] = {
     "identify_order": _ORDER_READS,
+    "which_book": _ORDER_READS,
+    "exception_why": _ORDER_READS,
+    "exception_offer": _ORDER_READS | frozenset({"get_refund_options"}),
     "ask_reason": _ORDER_READS,
     "empathy": frozenset({"recommend_book", "issue_goodwill_discount", "lookup_catalog"}),
     "choose_destination": _ORDER_READS | frozenset({"get_refund_options"}),

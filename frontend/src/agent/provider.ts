@@ -55,12 +55,18 @@ export interface ReceiptDownload {
   url: string
 }
 
+export interface ParcelLabel {
+  label_id: string
+  url: string
+}
+
 export interface AgentReply {
   reply: string
   intent: AgentIntent
   tools: ToolTrace[]
   conversation_id?: string
   receipt?: ReceiptDownload
+  label?: ParcelLabel
   step: string
   opening?: string
 }
@@ -167,9 +173,22 @@ function assertReply(value: unknown): AgentReply {
     tools: assertTools(record.tools),
     conversation_id,
     receipt: assertReceipt(record.receipt),
+    label: assertLabel(record.label),
     step: record.step,
     opening,
   }
+}
+
+function assertLabel(value: unknown): ParcelLabel | undefined {
+  if (value == null) return undefined
+  if (typeof value !== "object") return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.label_id !== "string" || typeof record.url !== "string") return undefined
+  if (!/^lbl_[a-z0-9]+$/.test(record.label_id)) return undefined
+  if (!record.url.startsWith("/api/labels/") || !record.url.includes(record.label_id)) {
+    return undefined
+  }
+  return { label_id: record.label_id, url: record.url }
 }
 
 function assertReceipt(value: unknown): ReceiptDownload | undefined {

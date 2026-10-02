@@ -95,12 +95,20 @@ class ReceiptDownload(BaseModel):
     url: str
 
 
+class ParcelLabel(BaseModel):
+    """PDF parcel label written with a store-credit exception."""
+
+    label_id: str
+    url: str
+
+
 class ChatReply(BaseModel):
     reply: str
     intent: Intent
     tools: list[ToolTrace] = Field(default_factory=list)
     conversation_id: str | None = None
     receipt: ReceiptDownload | None = None
+    label: ParcelLabel | None = None
     step: str
     opening: str | None = None
 

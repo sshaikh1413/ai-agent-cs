@@ -30,6 +30,7 @@ PROFILE_LINES = (
     "Write one short reply in English.",
     "Use only facts that appear in the tool JSON.",
     "Do not invent a book title, an author, a plot, a percent, a discount code, a receipt file, a shipment status, or a web address.",
+    "Do not name FedEx, UPS, USPS, or DHL unless that carrier is in the tool JSON.",
     "When the JSON includes an order status, copy that status and its status detail.",
     "Do not add an order id, receipt id, money amount, date, or card digits.",
     "Do not say a return is complete, started, or filed unless the JSON status is completed and a receipt id is present.",

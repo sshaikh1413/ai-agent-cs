@@ -39,6 +39,12 @@ def get_receipt(customer_id: str, receipt_id: str) -> dict[str, str]:
     return {"_id": receipt_id, "customerId": customer_id}
 
 
+def get_label(customer_id: str, label_id: str) -> dict[str, str]:
+    """The parcel label for this customer. The id is the label document id."""
+
+    return {"_id": label_id, "customerId": customer_id}
+
+
 def get_policy() -> dict[str, str]:
     return {"_id": POLICY_ID}
 

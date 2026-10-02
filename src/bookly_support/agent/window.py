@@ -23,6 +23,34 @@ def about_a_week(placed_at: datetime, today: date) -> bool:
     return WEEK_MIN_DAYS <= elapsed <= WEEK_MAX_DAYS
 
 
+_MONTHS = (
+    "",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def spoken_date(value: datetime) -> str:
+    """A delivery date as Mara says it, from the stored instant."""
+
+    moment = as_utc(value)
+    return f"{_MONTHS[moment.month]} {moment.day}, {moment.year}"
+
+
+def iso_day(value: datetime) -> str:
+    return as_utc(value).date().isoformat()
+
+
 def week_matches(orders: list[dict], today: date) -> list[dict]:
     """Orders whose placedAt falls 5 to 9 days before today, inclusive."""
 

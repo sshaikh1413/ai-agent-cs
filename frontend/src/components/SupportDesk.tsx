@@ -9,6 +9,7 @@ import {
   type CustomerId,
   type DeskInfo,
   type DeskOrder,
+  type ParcelLabel,
   type ReceiptDownload,
   type ToolTrace,
 } from "../agent/provider.ts"
@@ -24,6 +25,7 @@ type ThreadItem =
       intent: AgentIntent
       tools: ToolTrace[]
       receipt?: ReceiptDownload
+      label?: ParcelLabel
       step?: string
       opening?: string
       memory?: boolean
@@ -201,6 +203,7 @@ export function SupportDesk() {
             intent: reply.intent,
             tools: reply.tools,
             receipt: reply.receipt,
+            label: reply.label,
             step: reply.step,
             opening,
           }),
@@ -517,8 +520,9 @@ function EmptyThread({
       <p className="mt-4 text-base text-muted-foreground">
         Mara asks why the book is coming back, then refunds the card on file or store credit
         after {first ? `${first} chooses` : "you choose"}. The return is written only after that
-        choice, and that turn has the PDF receipt. She can also say where an order is, from the
-        status stored on it.
+        choice, and that turn has the PDF receipt. If the book is past the 30 days, she can
+        offer store credit only, and that turn opens the receipt and a parcel label. She can
+        also say where an order is, from the status stored on it.
         {name ? ` Signed in as ${name}.` : ""}
       </p>
       {desk.status === "loading" ? (
@@ -605,15 +609,31 @@ function AssistantBubble({
       {item.step ? (
         <p className="mt-3 border-t border-border pt-2 text-sm text-muted-foreground">{item.step}</p>
       ) : null}
-      {item.receipt ? (
-        <a
-          href={item.receipt.url}
-          download={`${item.receipt.receipt_id}.pdf`}
-          className="mt-3 inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
-        >
-          <Download aria-hidden="true" />
-          Download return receipt
-        </a>
+      {item.receipt || item.label ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {item.receipt ? (
+            <a
+              href={item.receipt.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+            >
+              <Download aria-hidden="true" />
+              Open return receipt
+            </a>
+          ) : null}
+          {item.label ? (
+            <a
+              href={item.label.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+            >
+              <Download aria-hidden="true" />
+              Open parcel label
+            </a>
+          ) : null}
+        </div>
       ) : null}
       {playbackError ? (
         <p className="mt-2 text-sm text-destructive">Playback didn't start in this browser.</p>

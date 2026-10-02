@@ -195,6 +195,72 @@ def longest_catalog_title(text: str, titles: list[str]) -> str | None:
     return best
 
 
+def asks_too_late(text: str) -> bool:
+    """She is asking whether a return is already outside the window.
+
+    A reason that a book arrived late is not this question. The machine only
+    uses it while it is still choosing a book.
+    """
+
+    lowered = _clean(text)
+    if "too late" in lowered:
+        return True
+    return re.search(r"\b(?:past|outside) the (?:return |30[- ]day )?window\b", lowered) is not None
+
+
+_YES = {
+    "yes",
+    "yep",
+    "yeah",
+    "sure",
+    "ok",
+    "okay",
+    "yes please",
+    "that works",
+    "that's fine",
+    "thats fine",
+    "that is fine",
+    "that's acceptable",
+    "thats acceptable",
+    "that is acceptable",
+    "acceptable",
+    "i accept",
+    "i'll take it",
+    "ill take it",
+    "sounds good",
+    "do it",
+    "go ahead",
+}
+
+
+def accepts_store_credit_exception(text: str) -> bool:
+    """Yes to the store-credit exception. A card phrase is not a yes.
+
+    "Card is fine" stays on the offer. It does not select the Visa.
+    """
+
+    lowered = _clean(text).strip(".!")
+    if is_decline(lowered):
+        return False
+    original, store = _destination_flags(lowered)
+    if original and not store:
+        return False
+    if store and not original:
+        return True
+    if original and store:
+        return False
+    return lowered in _YES
+
+
+def named_orders(text: str, orders: list[dict]) -> list[dict]:
+    """Orders named by id or title. An id wins when one was typed."""
+
+    quoted = quoted_order_ids(text, orders)
+    if quoted:
+        return quoted
+    return title_matches(text, orders)
+
+
 def mentions_week(text: str) -> bool:
     lowered = _clean(text)
     return any(phrase in lowered for phrase in _WEEK)
