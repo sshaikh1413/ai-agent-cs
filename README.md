@@ -13,7 +13,7 @@ Tools:
 - `lookup_catalog`, when they ask who the author is or what the book is about. The payload is that title's author and one-sentence summary
 - `issue_goodwill_discount`, only when the reason is a late delivery. One 20% code per customer and order
 
-After the order is selected, Mara asks why. The words they type are scored with VADER and stored on the completed return as `sentiment` (`negative`, `neutral`, or `positive`) next to `reason` and `reasonKind`. That label can change the apology opening only. A late delivery (including a birthday or a gift) still gets that 20% code and no recommendation. The apology follows the words they typed. It mentions a gift or a birthday only when their reason includes those words, and the percent and code are copied from the discount. A horror book with any other reason still gets one non-horror catalog title the reader does not already own, and no discount. Any other reason gets empathy only. The title is chosen in our code: skip horror, skip titles they already own, then pick from the order id so the same order always gets the same book. Then she asks for the Visa or store credit. `start_return` stores the reason text, `reasonKind`, and that sentiment label, and runs only after that choice. A second call returns the same receipt and does not rewrite a return that is already stored.
+After the order is selected, Mara asks why. The words they type are scored with VADER and stored on the completed return as `sentiment` (`negative`, `neutral`, or `positive`) next to `reason` and `reasonKind`. That label can change the apology opening only. A late delivery (including a birthday or a gift) still gets that 20% code and no recommendation. The apology follows the words they typed. It mentions a gift or a birthday only when their reason includes those words, and the percent and code are copied from the discount. A horror book with any other reason still gets one non-horror catalog title the reader does not already own, and no discount. Any other reason gets empathy only. The title is chosen in our code: skip horror, skip titles they already own, then pick from the order id so the same order always gets the same book. Then she asks for the Visa or store credit. Closed phrases (original payment, Visa, store credit, and the other phrases already listed in code) still select that destination. Any other sentence is embedded with fastembed `0.8.1` and `BAAI/bge-small-en-v1.5` against a short list of example sentences we own for each destination. The closer one is used only when its best example is at least 0.80 cosine and at least 0.12 ahead of the other destination. Otherwise Mara asks again. Claude does not choose the destination, and it does not invent the amount, last4, or code. `start_return` stores the reason text, `reasonKind`, and that sentiment label, and runs only after that choice. A second call returns the same receipt and does not rewrite a return that is already stored.
 
 Once the return is done, "do you recommend any books for me?" calls that same pick. The reply is the one title from the tool result. The offer does not include the summary. If nothing is left, she says so and does not name a book. A goodbye still closes the chat. Any other message asks if they need something else.
 
@@ -66,6 +66,8 @@ Pure tests (no Atlas, no Claude):
 ```bash
 uv run pytest -m "not live"
 ```
+
+The destination tests embed with `BAAI/bge-small-en-v1.5`. The first run downloads that model through fastembed into the local fastembed cache.
 
 The Becky script against Atlas and Claude:
 

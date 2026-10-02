@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
+from bookly_support.agent.destination import closest_destination
 from bookly_support.agent.window import week_matches
 
 _ORDER_ID = re.compile(r"\bBLY-\d+\b", re.IGNORECASE)
@@ -167,10 +168,47 @@ def title_matches(text: str, orders: list[dict]) -> list[dict]:
     return found
 
 
-def destination_choice(text: str) -> str | None:
+def explicit_destination(text: str) -> str | None:
+    """A closed phrase for original payment or store credit.
+
+    None when the words are not one of those phrases, when they decline, or
+    when both destinations are named. "card is fine" is not one of these phrases.
+    """
+
     lowered = _clean(text)
     if is_decline(lowered):
         return None
+    original, store = _destination_flags(lowered)
+    if original and store:
+        return None
+    if original:
+        return "original_payment"
+    if store:
+        return "store_credit"
+    return None
+
+
+def destination_choice(text: str) -> str | None:
+    """Original payment, store credit, or None when Mara should ask again.
+
+    Closed phrases stay as they are. Anything else is embedded and kept only
+    when one destination is clearly ahead of the other.
+    """
+
+    lowered = _clean(text)
+    if is_decline(lowered):
+        return None
+    original, store = _destination_flags(lowered)
+    if original and store:
+        return None
+    if original:
+        return "original_payment"
+    if store:
+        return "store_credit"
+    return closest_destination(lowered)
+
+
+def _destination_flags(lowered: str) -> tuple[bool, bool]:
     store = any(
         phrase in lowered
         for phrase in ("store credit", "shop credit", "as credit", "in credit")
@@ -192,13 +230,7 @@ def destination_choice(text: str) -> str | None:
         original = True
         if "store credit" not in lowered:
             store = False
-    if original and store:
-        return None
-    if original:
-        return "original_payment"
-    if store:
-        return "store_credit"
-    return None
+    return original, store
 
 
 def resolve_order(text: str, orders: list[dict], today: date) -> tuple[str, list[dict]]:
