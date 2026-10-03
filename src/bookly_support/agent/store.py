@@ -113,12 +113,29 @@ class MongoStore:
         return self._policy()["returnWindowDays"]
 
     def list_recent_orders(self, customer_id: str) -> list[dict]:
+        completed = self._completed_order_ids(customer_id)
         cursor = (
             self._db.orders.find(list_recent_orders(customer_id))
             .sort("placedAt", -1)
             .limit(RECENT_LIMIT)
         )
-        return [self._order(document) for document in cursor]
+        orders: list[dict] = []
+        for document in cursor:
+            order = self._order(document)
+            if order["orderId"] in completed:
+                order["completedReturn"] = True
+            orders.append(order)
+        return orders
+
+    def _completed_order_ids(self, customer_id: str) -> set[str]:
+        """Order ids whose return is already stored with status completed."""
+
+        found: set[str] = set()
+        for document in self._db.returns.find(latest_completed_return(customer_id), {"orderId": 1}):
+            order_id = document.get("orderId")
+            if isinstance(order_id, str) and order_id.strip():
+                found.add(order_id)
+        return found
 
     def get_order(self, customer_id: str, order_id: str, today: date) -> dict | None:
         document = self._db.orders.find_one(get_order(customer_id, order_id))

@@ -13,6 +13,7 @@ from bookly_support.agent.resolve import (
     accepts_store_credit_exception,
     asked_title,
     asks_for_recommendation,
+    asks_for_return,
     asks_order_status,
     asks_too_late,
     book_question,
@@ -187,6 +188,8 @@ class Machine:
         return self._identify(session, message, today, now)
 
     def _done(self, session: Session, message: str, now: datetime) -> Turn:
+        if asks_for_return(message):
+            return self._return_again(session, message, now)
         if session.exception and accepts_store_credit_exception(message):
             session.destination = "store_credit"
             session.phase = "write"
@@ -208,6 +211,21 @@ class Machine:
             intent="clarify",
             step="Step: anything else",
         )
+
+    def _return_again(self, session: Session, message: str, now: datetime) -> Turn:
+        """Start the which-book question again. The stored return stays."""
+
+        session.phase = "identify_order"
+        session.order_id = None
+        session.destination = None
+        session.return_id = None
+        session.reason = None
+        session.reason_kind = None
+        session.sentiment = None
+        session.title = None
+        session.genre = None
+        session.exception = False
+        return self._identify(session, message, now.date(), now)
 
     def _recommend(self, session: Session) -> Turn:
         seed = session.order_id or session.customer_id
@@ -256,10 +274,12 @@ class Machine:
         if asks_too_late(message):
             return self._too_late(session, message, today, now)
 
-        orders = run_tool(
-            session.phase,
-            "list_recent_orders",
-            lambda: self._store.list_recent_orders(session.customer_id),
+        orders = _without_completed_returns(
+            run_tool(
+                session.phase,
+                "list_recent_orders",
+                lambda: self._store.list_recent_orders(session.customer_id),
+            )
         )
         listed = ToolTrace(
             name="list_recent_orders",
@@ -965,10 +985,12 @@ class Machine:
         )
 
     def _listed(self, session: Session) -> tuple[list[dict], ToolTrace]:
-        orders = run_tool(
-            session.phase,
-            "list_recent_orders",
-            lambda: self._store.list_recent_orders(session.customer_id),
+        orders = _without_completed_returns(
+            run_tool(
+                session.phase,
+                "list_recent_orders",
+                lambda: self._store.list_recent_orders(session.customer_id),
+            )
         )
         listed = ToolTrace(
             name="list_recent_orders",
@@ -1123,6 +1145,12 @@ def _status_required(orders: list[dict]) -> list[str]:
         if isinstance(detail, str) and detail.strip():
             required.append(detail.strip())
     return required
+
+
+def _without_completed_returns(orders: list[dict]) -> list[dict]:
+    """A completed return is already stored. Do not offer that order again."""
+
+    return [order for order in orders if order.get("completedReturn") is not True]
 
 
 def _is_delivered(order: dict) -> bool:

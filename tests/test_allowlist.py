@@ -216,7 +216,20 @@ class FakeStore:
     def list_recent_orders(self, customer_id: str) -> list[dict]:
         assert customer_id == self.customer_id
         self.calls.append("list_recent_orders")
-        return list(self.orders)
+        completed = {
+            document["orderId"]
+            for document in self.repo.returns.values()
+            if document.get("customerId") == customer_id
+            and document.get("status") == "completed"
+            and isinstance(document.get("orderId"), str)
+        }
+        listed: list[dict] = []
+        for order in self.orders:
+            row = dict(order)
+            if row["orderId"] in completed:
+                row["completedReturn"] = True
+            listed.append(row)
+        return listed
 
     def get_order(self, customer_id: str, order_id: str, today: date) -> dict | None:
         assert customer_id == self.customer_id

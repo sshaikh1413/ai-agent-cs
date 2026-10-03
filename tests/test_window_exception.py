@@ -562,3 +562,140 @@ def test_why_not_asks_to_confirm_then_yes_writes_once() -> None:
     assert done.tools[0].payload["orderId"] == "BLY-18440"
     assert "15.99" in done.template
     assert "Visa" not in done.template
+
+
+def _progress_order(order_id: str, title: str, status: str, hour: int) -> dict:
+    return {
+        "orderId": order_id,
+        "title": title,
+        "placedAt": datetime(2026, 10, 1, hour, tzinfo=timezone.utc),
+        "status": status,
+        "refundableCents": 1700,
+        "paymentMethodId": "pm_becky_visa",
+    }
+
+
+def _becky_orders() -> list[dict]:
+    """Becky's recent orders, newest first, including the returned Piranesi."""
+
+    return [
+        _progress_order("BLY-44121", "The Night Circus", "shipped", 16),
+        _progress_order("BLY-44120", "Klara and the Sun", "packing", 14),
+        _order("BLY-22044", "Mexican Gothic", date(2026, 9, 30), date(2026, 10, 1), 1699, "horror"),
+        _order("BLY-22018", "The Midnight Library", date(2026, 9, 24), date(2026, 9, 26), 1699),
+        _order("BLY-22002", "Circe", date(2026, 9, 11), date(2026, 9, 15), 1700),
+        _order("BLY-18440", "Piranesi", date(2026, 8, 10), date(2026, 8, 15), 1599, "fantasy"),
+    ]
+
+
+def _finish_piranesi(store: FakeStore) -> tuple[Machine, Session]:
+    machine = Machine(store)
+    session = _session()
+    machine.step(session, "I want to return Piranesi", today=TODAY, now=NOW)
+    machine.step(session, REASON, today=TODAY, now=NOW)
+    done = machine.step(session, "yes", today=TODAY, now=NOW)
+    assert session.phase == "done"
+    assert done.tools[0].payload["status"] == "completed"
+    assert len(store.repo.returns) == 1
+    return machine, session
+
+
+def test_done_phase_return_lists_books_without_a_completed_return() -> None:
+    """After Piranesi is stored, another return asks which book and hides that order."""
+
+    store = FakeStore(_becky_orders())
+    machine, session = _finish_piranesi(store)
+    stored = next(iter(store.repo.returns.values()))
+    assert stored["orderId"] == "BLY-18440"
+    assert stored["status"] == "completed"
+    writes = store.calls.count("start_return")
+
+    status = machine.step(session, "where is my order", today=TODAY, now=NOW)
+    assert status.intent == "order_status"
+    assert status.step == "Step: order status"
+    assert "anything else" not in status.template.lower()
+    assert session.phase == "done"
+    assert "start_return" not in status.tools[0].name
+
+    named = machine.step(session, "what's the status of BLY-18440", today=TODAY, now=NOW)
+    assert named.intent == "order_status"
+    assert named.step == "Step: order status"
+    assert "Piranesi" in named.template
+    assert "delivered" in named.template
+    assert session.phase == "done"
+    assert named.choices == []
+
+    hedge = machine.step(session, "why not", today=TODAY, now=NOW)
+    assert hedge.template == "Sure. Is there anything else I can help with?"
+    assert hedge.step == "Step: anything else"
+    assert hedge.choices == []
+    assert session.phase == "done"
+    assert store.calls.count("start_return") == writes
+
+    phrases = ("return another book", "return", "I want to return a book")
+    expected_ids = ["BLY-44121", "BLY-44120", "BLY-22044", "BLY-22018", "BLY-22002"]
+    expected_marks = [
+        "Still on the way, shipped",
+        "Still on the way, packing",
+        "Delivered and inside the 30-day window",
+        "Delivered and inside the 30-day window",
+        "Delivered and inside the 30-day window",
+    ]
+    for phrase in phrases:
+        fresh = FakeStore(_becky_orders())
+        again_machine, again_session = _finish_piranesi(fresh)
+        turn = again_machine.step(again_session, phrase, today=TODAY, now=NOW)
+        assert turn.template == "Which book do you want to return?", phrase
+        assert "anything else" not in turn.template.lower(), phrase
+        assert turn.step == "Step: which order", phrase
+        assert [choice.order_id for choice in turn.choices] == expected_ids, phrase
+        assert [choice.mark for choice in turn.choices] == expected_marks, phrase
+        assert "BLY-18440" not in turn.template, phrase
+        assert "Piranesi" not in turn.template, phrase
+        payload_ids = [order["orderId"] for order in turn.tools[0].payload["orders"]]
+        assert payload_ids == expected_ids, phrase
+        assert again_session.phase == "identify_order", phrase
+        assert again_session.exception is False, phrase
+        assert len(fresh.repo.returns) == 1, phrase
+        assert next(iter(fresh.repo.returns.values()))["status"] == "completed"
+        assert fresh.calls.count("start_return") == 1, phrase
+
+    clicked = machine.step(session, "return another book", today=TODAY, now=NOW)
+    assert [choice.order_id for choice in clicked.choices] == expected_ids
+    picked = machine.step(session, "BLY-22018", today=TODAY, now=NOW)
+    assert session.order_id == "BLY-22018"
+    assert picked.choices == []
+    assert "What made you want to send it back?" in picked.template
+    assert store.calls.count("start_return") == writes
+
+    typed_store = FakeStore(_becky_orders())
+    typed_machine, typed_session = _finish_piranesi(typed_store)
+    typed_machine.step(typed_session, "return another book", today=TODAY, now=NOW)
+    typed = typed_machine.step(typed_session, "Circe", today=TODAY, now=NOW)
+    assert typed_session.order_id == "BLY-22002"
+    assert typed.choices == []
+    assert "Circe" in typed.template
+    assert "What made you want to send it back?" in typed.template
+
+    list_session = Session(id="conv_list", customer_id="cust_becky")
+    listed = typed_machine.step(list_session, "I want to return a product", today=TODAY, now=NOW)
+    assert "BLY-18440" not in [choice.order_id for choice in listed.choices]
+    stayed = typed_machine.step(list_session, "Piranesi", today=TODAY, now=NOW)
+    assert list_session.order_id is None
+    assert stayed.template == "Which book do you want to return?"
+    assert "BLY-18440" not in [choice.order_id for choice in stayed.choices]
+
+    goodbye = Session(
+        id="conv_bye",
+        customer_id="cust_becky",
+        phase="done",
+        exception=True,
+        order_id="BLY-18440",
+        title="Piranesi",
+    )
+    closed = machine.step(goodbye, "no thanks", today=TODAY, now=NOW)
+    assert goodbye.phase == "closed"
+    assert closed.step == "Step: close"
+    assert closed.choices == []
+    assert len(store.repo.returns) == 1
+    assert next(iter(store.repo.returns.values()))["orderId"] == "BLY-18440"

@@ -64,6 +64,19 @@ def asks_for_recommendation(text: str) -> bool:
     return _RECOMMEND_ASK.search(_clean(text)) is not None
 
 
+_RETURN_WORD = re.compile(r"\breturns?\b")
+_REFUSES_RETURN = re.compile(r"\b(?:do not|don't|dont)\s+want to return\b")
+
+
+def asks_for_return(text: str) -> bool:
+    """They want to start a return. "returned" and a refusal are not this."""
+
+    lowered = _clean(text).replace("\u2019", "'").replace("\u2018", "'")
+    if _REFUSES_RETURN.search(lowered):
+        return False
+    return _RETURN_WORD.search(lowered) is not None
+
+
 _WHAT = r"what(?:['’]?s| is| was)"
 _AUTHOR_Q = re.compile(r"\bauthor\b|\bwho wrote\b")
 _ABOUT_Q = re.compile(rf"\b{_WHAT}\s+\S.+?\s+about\b")
