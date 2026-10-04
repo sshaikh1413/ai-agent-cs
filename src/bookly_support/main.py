@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
@@ -13,6 +13,7 @@ from bookly_support.agent.provider import AgentProvider, ChatReply, ChatRequest,
 from bookly_support.agent.return_agent import ReturnAgent
 from bookly_support.agent.store import MongoStore
 from bookly_support.config import ALLOWED_CUSTOMER_IDS, CUSTOMER_ID, load_settings
+from bookly_support.voice.socket import handle_voice
 
 app = FastAPI(title="Bookly support desk", version="0.2.0")
 app.add_middleware(
@@ -121,6 +122,13 @@ def demo_reset(request: Request) -> dict[str, int | str]:
             status_code=500,
             detail="The demo didn't reset.",
         ) from None
+
+
+@app.websocket("/api/voice")
+async def voice(websocket: WebSocket) -> None:
+    """Mic audio in, the same desk out. The greeting is a script, not a tool call."""
+
+    await handle_voice(websocket, get_agent)
 
 
 @app.post("/api/chat", response_model=ChatReply)

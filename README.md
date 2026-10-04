@@ -39,6 +39,20 @@ When that write completes, the desk shows a download for a one-page PDF. The fil
 
 **Reset demo** on the desk calls `POST /api/demo/reset`. It clears chat sessions so the next message starts a new conversation. It removes returns, receipts, parcel labels, and goodwill discounts for the delivered orders BLY-22018, BLY-22002, BLY-22044, BLY-33010, and BLY-18440, so those orders can be returned again. It does not delete customers, catalog rows, Becky's shipping address, or the in-progress orders BLY-44120 through BLY-44123, and it does not change their statuses. Before a return is removed, a reason stored on it is copied to a `memory` row for that customer: customer id, order id, title, reason text, reasonKind, and sentiment. A return with no reason, including BLY-22018 when none was stored, does not get an invented one. Reset does not wipe memory rows already kept, and the welcome does not quote that reason.
 
+## Voice call
+
+**Voice** sits on the header row beside Reset demo. It opens a call panel, asks for the microphone, and Mara speaks first. The chat stays. If the microphone is blocked, the panel says so and typing still works. Switching Becky or Bob, or Reset demo, ends the call.
+
+The opening is a script. It does not name an order, a price, or a return window:
+
+"Hi, thanks for calling Bookly. My name is Mara, and I'm your AI assistant. How can I help you?"
+
+After that, a return, a status, a policy question, store credit, the receipt, and the parcel label go through the same `ReturnAgent.reply` as the chat, including the checker. The panel shows the transcript, the same book buttons, and Open return receipt or Open parcel label. Saying a title or an order id selects it. Piper speaks only the reply the checker accepted. The step line, the tool name, and the JSON are not spoken. When the buttons carry a title the sentence left off, she says that short list as well.
+
+The browser sends 16 kHz PCM over `/api/voice`, with echo cancellation. Silero VAD ends a turn after about half a second of silence and stops playback if the customer speaks. faster-whisper `distil-small.en` transcribes English on CPU. Piper `en_US-lessac-medium` speaks one sentence at a time. This slice does not use Pipecat, LiveKit, Daily, or a speech-to-speech model, and it has no phone number.
+
+Weights download on the first call into `~/.cache/bookly-voice`. They are not committed.
+
 ## Requirements
 
 - CPython **3.12.14** (`.python-version` and `requires-python`)

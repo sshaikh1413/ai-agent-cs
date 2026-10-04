@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { BookOpen, Download, RotateCcw, Volume2, VolumeX } from "lucide-react"
+import { BookOpen, Download, Phone, RotateCcw, Volume2, VolumeX } from "lucide-react"
 import { Button } from "@/components/ui/button.tsx"
 import {
   AgentDeskError,
@@ -15,6 +15,7 @@ import {
   type ToolTrace,
 } from "../agent/provider.ts"
 import { speak, speechOutputSupported, stopSpeaking } from "../speech/playback.ts"
+import { CallPanel } from "./CallPanel.tsx"
 import { Composer } from "./Composer.tsx"
 
 type ThreadItem =
@@ -82,6 +83,7 @@ export function SupportDesk() {
   const [customerId, setCustomerId] = useState<CustomerId>(storedCustomer)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
+  const [callOpen, setCallOpen] = useState(false)
   const customerIdRef = useRef<CustomerId>(customerId)
   const conversationId = useRef<string | null>(
     typeof sessionStorage === "undefined" ? null : sessionStorage.getItem(conversationKey(customerId)),
@@ -119,8 +121,13 @@ export function SupportDesk() {
     }
   }
 
+  function endCall() {
+    setCallOpen(false)
+  }
+
   async function resetDemo() {
     if (locked) return
+    endCall()
     setResetting(true)
     setResetError(null)
     stopSpeaking()
@@ -142,6 +149,7 @@ export function SupportDesk() {
 
   function signIn(next: CustomerId) {
     if (next === customerIdRef.current || locked) return
+    endCall()
     stopSpeaking()
     setSpeakingId(null)
     sessionStorage.removeItem(conversationKey(next))
@@ -279,16 +287,36 @@ export function SupportDesk() {
               <p className="truncate text-sm text-primary-foreground/80">Support desk</p>
             </div>
           </div>
-          <div className="flex shrink-0 flex-nowrap items-center gap-2">
+          <div className="flex shrink-0 flex-nowrap items-center gap-1 sm:gap-2">
             <Button
               type="button"
               variant="ghost"
               disabled={locked}
-              className="h-11 min-h-11 shrink-0 border border-primary-foreground/40 bg-primary-foreground/10 px-3 text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground"
+              className="h-11 min-h-11 shrink-0 border border-primary-foreground/40 bg-primary-foreground/10 px-2 text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground sm:px-3"
               onClick={() => void resetDemo()}
             >
               <RotateCcw />
               Reset demo
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              aria-pressed={callOpen}
+              aria-label={callOpen ? "End call" : "Voice"}
+              aria-controls="mara-call"
+              className={
+                callOpen
+                  ? "h-11 min-h-11 shrink-0 border border-primary-foreground bg-primary-foreground px-2 text-primary hover:bg-primary-foreground hover:text-primary sm:px-3"
+                  : "h-11 min-h-11 shrink-0 border border-primary-foreground/40 bg-primary-foreground/10 px-2 text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground sm:px-3"
+              }
+              onClick={() => {
+                stopSpeaking()
+                setSpeakingId(null)
+                setCallOpen((open) => !open)
+              }}
+            >
+              <Phone />
+              <span className="hidden sm:inline">{callOpen ? "End call" : "Voice"}</span>
             </Button>
             <p className="shrink-0 font-serif text-lg leading-none">Mara</p>
             <div
@@ -308,8 +336,8 @@ export function SupportDesk() {
                     disabled={locked}
                     className={
                       selected
-                        ? "h-11 min-h-11 shrink-0 rounded-lg bg-primary-foreground px-3 text-primary hover:bg-primary-foreground hover:text-primary"
-                        : "h-11 min-h-11 shrink-0 rounded-lg px-3 text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground"
+                        ? "h-11 min-h-11 shrink-0 rounded-lg bg-primary-foreground px-2 text-primary hover:bg-primary-foreground hover:text-primary sm:px-3"
+                        : "h-11 min-h-11 shrink-0 rounded-lg px-2 text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground sm:px-3"
                     }
                     onClick={() => signIn(reader.id)}
                   >
@@ -332,6 +360,7 @@ export function SupportDesk() {
           <DeskPanel desk={desk} busy={locked} customerId={customerId} onRetry={() => void loadDesk()} onAsk={send} />
         </aside>
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {callOpen ? <CallPanel customerId={customerId} onClose={endCall} /> : null}
           <details className="shrink-0 border-b border-border lg:hidden">
             <summary className="px-4 py-3 text-sm font-semibold">Profile and orders</summary>
             <div className="max-h-96 overflow-y-auto px-4 pb-3">
@@ -398,7 +427,7 @@ export function SupportDesk() {
               Read-aloud isn't available in this browser.
             </p>
           ) : null}
-          <Composer disabled={locked} onSend={send} />
+          <Composer disabled={locked} callActive={callOpen} onSend={send} />
         </main>
       </div>
     </div>

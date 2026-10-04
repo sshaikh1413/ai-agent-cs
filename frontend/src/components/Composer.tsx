@@ -6,9 +6,11 @@ import { speechInputSupported, startSpeechInput, type SpeechSession } from "../s
 
 export function Composer({
   disabled,
+  callActive = false,
   onSend,
 }: {
   disabled: boolean
+  callActive?: boolean
   onSend: (text: string) => void
 }) {
   const [draft, setDraft] = useState("")
@@ -22,6 +24,10 @@ export function Composer({
   useEffect(() => {
     return () => session.current?.stop()
   }, [])
+
+  useEffect(() => {
+    if (callActive) stopListening()
+  }, [callActive])
 
   function stopListening() {
     session.current?.stop()
@@ -101,26 +107,30 @@ export function Composer({
           variant={listening ? "default" : "outline"}
           size="icon-lg"
           className="size-11"
-          disabled={!supported || disabled}
+          disabled={!supported || disabled || callActive}
           aria-pressed={listening}
           aria-label={listening ? "Stop speech input" : "Speak your question"}
           title={
-            supported
-              ? "Speak, then edit the transcript before you send"
-              : "Speech input isn't available in this browser"
+            callActive
+              ? "The call is using the microphone. Typing still works."
+              : supported
+                ? "Speak, then edit the transcript before you send"
+                : "Speech input isn't available in this browser"
           }
           onClick={toggleMic}
         >
           <Mic />
         </Button>
         <p className="min-w-0 flex-1 text-sm text-muted-foreground" role="status">
-          {listening
-            ? "Listening. The transcript lands in the box so you can edit it before sending."
-            : speechError
-              ? speechError
-              : supported
-                ? "Enter to send. Shift+Enter for a new line."
-                : "Speech input isn't available in this browser. Typing still works."}
+          {callActive
+            ? "The call is using the microphone. Typing still works."
+            : listening
+              ? "Listening. The transcript lands in the box so you can edit it before sending."
+              : speechError
+                ? speechError
+                : supported
+                  ? "Enter to send. Shift+Enter for a new line."
+                  : "Speech input isn't available in this browser. Typing still works."}
         </p>
         <Button type="submit" className="h-11 px-4" disabled={disabled || draft.trim().length === 0}>
           Send

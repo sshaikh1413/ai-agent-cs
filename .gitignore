@@ -9,3 +9,6 @@ frontend/dist/
 *.local
 .env
 agent-tools/
+# Voice weights download on first call. Do not commit them.
+*.onnx
+*.onnx.json
