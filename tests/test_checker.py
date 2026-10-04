@@ -176,6 +176,41 @@ def test_a_different_author_or_plot_is_replaced_by_the_template() -> None:
     assert accept_draft(wrong_plot, template, payload, ["Susanna Clarke"]) == template
 
 
+def test_day_count_dollar_and_code_must_be_in_the_payload() -> None:
+    payload = {
+        "body": (
+            "Standard shipping takes 5–7 business days. "
+            "It is free at $35 and over, and otherwise it is $5.99."
+        ),
+        "standardShippingCents": 599,
+        "freeAtCents": 3500,
+    }
+    assert facts_allowed(payload["body"], payload)
+    assert any("3" in item for item in unsupported_facts("It takes 3 business days.", payload))
+    assert any("4.99" in item for item in unsupported_facts("It costs $4.99.", payload))
+    assert any("FREESHIP" in item for item in unsupported_facts("Use code FREESHIP.", payload))
+    window = {"returnWindowDays": 30, "mark": "Delivered and past the 30-day window"}
+    assert facts_allowed("Delivered and past the 30-day window.", window)
+    assert any("14" in item for item in unsupported_facts("Delivered and past the 14-day window.", window))
+
+
+def test_a_sent_code_or_an_account_claim_is_rejected() -> None:
+    payload = {
+        "body": (
+            "Bookly emails a one-time code for sign-in. "
+            "This desk does not send that code, does not ask you to type a password, "
+            "and does not say if an email address is on file."
+        )
+    }
+    assert facts_allowed(payload["body"], payload)
+    bad = "We emailed you a code at becky@example.com and that email has an account."
+    problems = " ".join(unsupported_facts(bad, payload)).lower()
+    assert "emailed you" in problems
+    assert "becky@example.com" in problems
+    assert "has an account" in problems
+    assert accept_draft(bad, payload["body"], payload, ["does not send that code"]) == payload["body"]
+
+
 def test_templates_are_grounded() -> None:
     offer = refund_choice(OPTIONS["results"][0])
     done = completed(RECEIPT["results"][0])

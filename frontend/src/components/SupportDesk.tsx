@@ -618,25 +618,35 @@ function AssistantBubble({
       {item.opening ? <p className="mb-3 whitespace-pre-wrap">{item.opening}</p> : null}
       <p className="whitespace-pre-wrap">{item.text}</p>
       {item.choices && item.choices.length > 0 ? (
-        <ul className="mt-3 grid gap-2" aria-label="Choose an order">
-          {item.choices.map((choice) => (
-            <li key={choice.order_id}>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={busy}
-                className="h-auto min-h-11 w-full max-w-full items-start justify-start whitespace-normal px-3 py-2 text-left"
-                onClick={() => onChoose(choice.order_id)}
-              >
-                <span className="min-w-0">
-                  <span className="block font-semibold break-words">{choice.title}</span>
-                  <span className="block text-xs font-normal break-words text-muted-foreground">
-                    {choice.order_id} · {choice.mark}
+        <ul
+          className="mt-3 grid gap-2"
+          aria-label={
+            item.choices.every((choice) => !/^BLY-\d+$/i.test(choice.order_id))
+              ? "Choose a topic"
+              : "Choose an order"
+          }
+        >
+          {item.choices.map((choice) => {
+            const orderLike = /^BLY-\d+$/i.test(choice.order_id)
+            return (
+              <li key={choice.order_id}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  className="h-auto min-h-11 w-full max-w-full items-start justify-start whitespace-normal px-3 py-2 text-left"
+                  onClick={() => onChoose(choice.order_id)}
+                >
+                  <span className="min-w-0">
+                    <span className="block font-semibold break-words">{choice.title}</span>
+                    <span className="block text-xs font-normal break-words text-muted-foreground">
+                      {orderLike ? `${choice.order_id} · ${choice.mark}` : choice.mark}
+                    </span>
                   </span>
-                </span>
-              </Button>
-            </li>
-          ))}
+                </Button>
+              </li>
+            )
+          })}
         </ul>
       ) : null}
       {item.step ? (

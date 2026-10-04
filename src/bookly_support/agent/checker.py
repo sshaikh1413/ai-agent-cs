@@ -317,6 +317,10 @@ def unsupported_facts(reply: str, payload: object) -> list[str]:
     problems.extend(_ungrounded_status_detail(reply, payload, blob))
     problems.extend(_ungrounded_card_refund(reply, payload))
     problems.extend(_ungrounded_carrier(reply, blob))
+    problems.extend(_ungrounded_day_count(reply, payload))
+    problems.extend(_ungrounded_email(reply, blob))
+    problems.extend(_ungrounded_code_sent(reply, blob))
+    problems.extend(_ungrounded_account_claim(reply, blob))
     return problems
 
 
@@ -369,6 +373,136 @@ def _ungrounded_card_refund(reply: str, payload: object) -> list[str]:
                 break
             window = lowered[max(0, index - 32) : index]
             if not any(negation in window for negation in _CARD_NEGATION):
+                problems.append(phrase)
+                break
+            start = index + len(phrase)
+    return problems
+
+
+_DAY_COUNT = re.compile(
+    r"\b(\d{1,3})(?:\s*[–—-]\s*(\d{1,3}))?\s*(?:business\s+)?days?\b",
+    re.IGNORECASE,
+)
+_DAY_HYPHEN = re.compile(r"\b(\d{1,3})\s*[–—-]\s*days?\b", re.IGNORECASE)
+_EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_CODE_SENT = (
+    "we emailed",
+    "i emailed",
+    "we've emailed",
+    "i've emailed",
+    "we sent",
+    "i sent",
+    "we've sent",
+    "i've sent",
+    "code was sent",
+    "sent you a code",
+    "sent a code",
+    "emailed you",
+    "sent you",
+    "just sent",
+)
+_ACCOUNT_CLAIM = (
+    "has an account",
+    "doesn't have an account",
+    "does not have an account",
+    "no account",
+    "account exists",
+    "account does not exist",
+    "is registered",
+    "isn't registered",
+    "is on file",
+)
+
+
+def _number_in_blob(number: str, blob: str) -> bool:
+    return re.search(rf"(?<!\d){re.escape(number)}(?!\d)", blob) is not None
+
+
+def _fact_text(node: object) -> str:
+    """Payload text with the original characters, so a dash is not a JSON escape."""
+
+    parts: list[str] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, bool) or value is None:
+            return
+        if isinstance(value, int):
+            parts.append(str(value))
+            return
+        if isinstance(value, str):
+            parts.append(value)
+            return
+        if isinstance(value, dict):
+            for child in value.values():
+                walk(child)
+            return
+        if isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(node)
+    return " ".join(parts).lower()
+
+
+def _ungrounded_day_count(reply: str, payload: object) -> list[str]:
+    """A day count whose number is not in the tool payload."""
+
+    text = _fact_text(payload)
+    problems: list[str] = []
+    seen: set[str] = set()
+    for pattern in (_DAY_COUNT, _DAY_HYPHEN):
+        for match in pattern.finditer(reply):
+            for group in match.groups():
+                if not group or group in seen:
+                    continue
+                seen.add(group)
+                if not _number_in_blob(group, text):
+                    problems.append(f"{group} days")
+    return problems
+
+
+def _ungrounded_email(reply: str, blob: str) -> list[str]:
+    """An email address the tool payload did not contain."""
+
+    problems: list[str] = []
+    for match in _EMAIL.finditer(reply):
+        if match.group(0).lower() not in blob:
+            problems.append(match.group(0))
+    return problems
+
+
+def _ungrounded_code_sent(reply: str, blob: str) -> list[str]:
+    """A claim that this desk already sent a sign-in code."""
+
+    lowered = reply.lower()
+    problems: list[str] = []
+    for phrase in _CODE_SENT:
+        if phrase in lowered and phrase not in blob:
+            problems.append(phrase)
+    return problems
+
+
+_CLAIM_NEGATION = ("not ", "n't", "cannot", "can't", "won't")
+
+
+def _ungrounded_account_claim(reply: str, blob: str) -> list[str]:
+    """A claim that an email address does or does not have an account.
+
+    A refusal such as "does not say if an email address is on file" is not a
+    claim. Saying the address is on file, with no refusal in front of it, is.
+    """
+
+    del blob
+    lowered = reply.lower()
+    problems: list[str] = []
+    for phrase in _ACCOUNT_CLAIM:
+        start = 0
+        while True:
+            index = lowered.find(phrase, start)
+            if index < 0:
+                break
+            window = lowered[max(0, index - 64) : index]
+            if not any(negation in window for negation in _CLAIM_NEGATION):
                 problems.append(phrase)
                 break
             start = index + len(phrase)

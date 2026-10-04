@@ -210,8 +210,38 @@ def closed() -> str:
     return "Okay. I'll close this chat."
 
 
-def password_refused() -> str:
-    return "I can help return a book from this account. I can't reset a password."
+def which_topic() -> str:
+    """A weak article match. The buttons carry the topic names."""
+
+    return "Which topic do you mean? Pick one below, or type it."
+
+
+def customer_discounts(payload: dict) -> str:
+    """The codes stored for this customer. An empty list invents nothing."""
+
+    rows = payload.get("discounts") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return "I don't see a discount code on this account."
+    parts: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        code = row.get("code")
+        if not isinstance(code, str) or not code.strip():
+            continue
+        percent = row.get("percentLabel")
+        order_id = row.get("orderId")
+        if isinstance(percent, str) and percent.strip() and isinstance(order_id, str) and order_id.strip():
+            parts.append(f"{code.strip()}, {percent.strip()} off, on order {order_id.strip()}")
+        elif isinstance(percent, str) and percent.strip():
+            parts.append(f"{code.strip()}, {percent.strip()} off")
+        else:
+            parts.append(code.strip())
+    if not parts:
+        return "I don't see a discount code on this account."
+    if len(parts) == 1:
+        return f"Your discount code is {parts[0]}."
+    return "Your discount codes are " + " and ".join(parts) + "."
 
 
 def _stored_detail(order: dict) -> str:

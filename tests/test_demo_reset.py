@@ -76,6 +76,17 @@ class _Database:
                 {"_id": "book_midnight_library", "title": "The Midnight Library"},
             ]
         )
+        self.policies = _Collection(
+            [
+                {"_id": "return-window", "returnWindowDays": 30, "body": "Delivered books can be returned within 30 days."},
+                {
+                    "_id": "shipping-speed",
+                    "kind": "article",
+                    "topic": "Shipping speed and price",
+                    "body": "Standard shipping takes 5–7 business days.",
+                },
+            ]
+        )
         self.orders = _Collection(
             [
                 {"_id": "BLY-22018", "status": "delivered", "lines": [{"title": "The Midnight Library"}]},
@@ -182,6 +193,7 @@ def test_reset_clears_the_session_and_return_and_keeps_the_reason() -> None:
     orders = _copy(database.orders)
     customers = _copy(database.customers)
     catalog = _copy(database.catalog)
+    policies = _copy(database.policies)
     result = reset_bookly_demo(database)
 
     assert result["status"] == "reset"
@@ -192,6 +204,7 @@ def test_reset_clears_the_session_and_return_and_keeps_the_reason() -> None:
     assert database.orders.docs == orders
     assert database.customers.docs == customers
     assert database.catalog.docs == catalog
+    assert database.policies.docs == policies
     statuses = {doc["_id"]: doc["status"] for doc in database.orders.docs}
     assert statuses["BLY-22018"] == "delivered"
     assert statuses["BLY-22002"] == "delivered"

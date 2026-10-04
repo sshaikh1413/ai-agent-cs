@@ -46,6 +46,7 @@ class ReturnAgent:
             can_help=[
                 f"Returns for {name}, who is already signed in.",
                 "Where an order is, from the status stored on that order.",
+                "Shipping, returns, sign-in, and the other shop policies, from Bookly's own articles.",
                 "Why the book is coming back, before any refund.",
                 "A refund to the original card or to store credit, after they choose.",
                 "A one-page PDF receipt after the return is written.",
@@ -65,6 +66,7 @@ class ReturnAgent:
                 "I want to return a product",
                 follow_up,
                 "Where is my order",
+                "How long does shipping take?",
             ],
             profile=list(PROFILE_LINES),
             opening=_welcome(*self._visit(customer_id), _customer_name(customer)),

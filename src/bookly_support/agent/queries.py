@@ -49,6 +49,20 @@ def get_policy() -> dict[str, str]:
     return {"_id": POLICY_ID}
 
 
+def policy_articles() -> dict[str, str]:
+    """Shop articles. The return-window document is not one of these."""
+
+    return {"kind": "article"}
+
+
+def policy_article(article_id: str) -> dict[str, str]:
+    return {"_id": article_id, "kind": "article"}
+
+
+def customer_discounts(customer_id: str) -> dict[str, str]:
+    return {"customerId": customer_id}
+
+
 def get_session(customer_id: str, conversation_id: str) -> dict[str, str]:
     return {"_id": conversation_id, "customerId": customer_id}
 

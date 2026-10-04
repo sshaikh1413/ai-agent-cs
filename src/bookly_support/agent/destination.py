@@ -148,6 +148,13 @@ def _exception_ready() -> tuple[TextEmbedding, np.ndarray]:
         return model, _exception_examples
 
 
+def shared_embedding_model() -> TextEmbedding:
+    """The bge-small model already used to score refund wording."""
+
+    model, _examples = _ready()
+    return model
+
+
 def _ready() -> tuple[TextEmbedding, np.ndarray]:
     global _model, _examples
     if _model is not None and _examples is not None:

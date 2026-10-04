@@ -78,6 +78,9 @@ ToolName = Literal[
     "start_return",
     "recommend_book",
     "issue_goodwill_discount",
+    "lookup_catalog",
+    "get_policy_article",
+    "list_customer_discounts",
 ]
 
 

@@ -121,6 +121,8 @@ def reset_bookly_demo(database) -> dict[str, int | str]:
     orders_before = _snapshot(database.orders)
     customers_before = _snapshot(database.customers)
     catalog_before = _snapshot(database.catalog)
+    policies = getattr(database, "policies", None)
+    policies_before = _snapshot(policies) if policies is not None else None
 
     sessions = list(database.sessions.find({}))
     returns = list(database.returns.find({}))
@@ -156,6 +158,8 @@ def reset_bookly_demo(database) -> dict[str, int | str]:
         raise RuntimeError("Reset changed a customer.")
     if _snapshot(database.catalog) != catalog_before:
         raise RuntimeError("Reset changed the catalog.")
+    if policies is not None and _snapshot(policies) != policies_before:
+        raise RuntimeError("Reset changed a policy article.")
 
     return {
         "status": "reset",

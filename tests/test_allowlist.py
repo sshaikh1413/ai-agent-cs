@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from bookly_support.agent.articles import ARTICLES, public_article
 from bookly_support.agent.allowlist import TOOL_NAMES, ToolNotAllowed, allowed_tools, run_tool
 from bookly_support.agent.discounts import DuplicateDiscount, issue_goodwill_discount
 from bookly_support.agent.eligibility import is_eligible
@@ -8,6 +9,7 @@ from bookly_support.agent.machine import Machine, Session
 from bookly_support.agent.queries import (
     completed_return,
     completed_return_by_id,
+    customer_discounts,
     get_order,
     get_payment_method,
     get_receipt,
@@ -37,15 +39,23 @@ def test_only_the_return_tools_exist() -> None:
         "recommend_book",
         "issue_goodwill_discount",
         "lookup_catalog",
+        "get_policy_article",
+        "list_customer_discounts",
     )
     assert allowed_tools("identify_order") == frozenset(
-        {"list_recent_orders", "get_order", "lookup_catalog"}
+        {
+            "list_recent_orders",
+            "get_order",
+            "lookup_catalog",
+            "get_policy_article",
+            "list_customer_discounts",
+        }
     )
     assert "start_return" not in allowed_tools("identify_order")
     assert "get_refund_options" not in allowed_tools("identify_order")
     assert "recommend_book" not in allowed_tools("identify_order")
     assert allowed_tools("ask_reason") == frozenset(
-        {"list_recent_orders", "get_order", "lookup_catalog"}
+        {"list_recent_orders", "get_order", "lookup_catalog", "get_policy_article"}
     )
     assert allowed_tools("empathy") == frozenset({"recommend_book", "lookup_catalog"})
     assert allowed_tools("empathy", "other") == frozenset({"recommend_book", "lookup_catalog"})
@@ -54,11 +64,24 @@ def test_only_the_return_tools_exist() -> None:
     )
     assert "issue_goodwill_discount" not in allowed_tools("write", "late_delivery")
     assert allowed_tools("choose_destination") == frozenset(
-        {"get_refund_options", "list_recent_orders", "get_order", "lookup_catalog"}
+        {
+            "get_refund_options",
+            "list_recent_orders",
+            "get_order",
+            "lookup_catalog",
+            "get_policy_article",
+        }
     )
     assert allowed_tools("write") == frozenset({"start_return", "lookup_catalog"})
     assert allowed_tools("done") == frozenset(
-        {"recommend_book", "lookup_catalog", "list_recent_orders", "get_order"}
+        {
+            "recommend_book",
+            "lookup_catalog",
+            "list_recent_orders",
+            "get_order",
+            "get_policy_article",
+            "list_customer_discounts",
+        }
     )
     assert allowed_tools("closed") == frozenset()
 
@@ -122,6 +145,7 @@ def test_queries_include_customer_id() -> None:
         "customerId": "cust_bob",
         "orderId": "BLY-33010",
     }
+    assert customer_discounts("cust_becky") == {"customerId": "cust_becky"}
 
 
 def test_source_has_no_vector_search_or_password_reset() -> None:
@@ -280,6 +304,37 @@ class FakeStore:
     def match_catalog_title(self, text: str) -> str | None:
         titles = [str(book.get("title") or "") for book in self.catalog]
         return longest_catalog_title(text, titles)
+
+    def policy_articles(self) -> list[dict]:
+        return [dict(article) for article in ARTICLES]
+
+    def get_policy_article(self, article_id: str) -> dict | None:
+        self.calls.append("get_policy_article")
+        for article in ARTICLES:
+            if article["id"] == article_id:
+                return public_article(article, self.return_window_days())
+        return None
+
+    def list_customer_discounts(self, customer_id: str) -> dict:
+        assert customer_id == self.customer_id
+        self.calls.append("list_customer_discounts")
+        found: list[dict] = []
+        for document in self.discounts.docs.values():
+            if document.get("customerId") != customer_id:
+                continue
+            code = document.get("code")
+            if not isinstance(code, str) or not code.strip():
+                continue
+            row: dict = {"code": code.strip()}
+            order_id = document.get("orderId")
+            if isinstance(order_id, str) and order_id.strip():
+                row["orderId"] = order_id.strip()
+            percent = document.get("percent")
+            if isinstance(percent, int):
+                row["percent"] = percent
+                row["percentLabel"] = f"{percent}%"
+            found.append(row)
+        return {"discounts": found}
 
     def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
         assert customer_id == self.customer_id

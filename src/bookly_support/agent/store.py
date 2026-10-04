@@ -8,6 +8,7 @@ from datetime import date, datetime, timezone
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 
+from bookly_support.agent.articles import normalize_article, public_article
 from bookly_support.agent.discounts import DuplicateDiscount
 from bookly_support.agent.discounts import issue_goodwill_discount as commit_discount
 from bookly_support.agent.eligibility import is_eligible
@@ -26,8 +27,11 @@ from bookly_support.agent.queries import (
     get_label,
     get_order,
     get_payment_method,
+    customer_discounts,
     get_policy,
     get_receipt,
+    policy_article,
+    policy_articles,
     get_session,
     goodwill_discount,
     latest_completed_return,
@@ -111,6 +115,41 @@ class MongoStore:
         """Policy length used to mark a delivered book inside or past the window."""
 
         return self._policy()["returnWindowDays"]
+
+    def policy_articles(self) -> list[dict]:
+        """Shop articles used to match a question. The return-window row is separate."""
+
+        return [
+            normalize_article(document)
+            for document in self._db.policies.find(policy_articles())
+        ]
+
+    def get_policy_article(self, article_id: str) -> dict | None:
+        """One article. The return-window day count is filled from the existing policy."""
+
+        document = self._db.policies.find_one(policy_article(article_id))
+        if document is None:
+            return None
+        return public_article(document, self.return_window_days())
+
+    def list_customer_discounts(self, customer_id: str) -> dict:
+        """Discount rows stored for this customer. Missing rows are an empty list."""
+
+        found: list[dict] = []
+        for document in self._db.discounts.find(customer_discounts(customer_id)):
+            code = document.get("code")
+            if not isinstance(code, str) or not code.strip():
+                continue
+            row: dict = {"code": code.strip()}
+            order_id = document.get("orderId")
+            if isinstance(order_id, str) and order_id.strip():
+                row["orderId"] = order_id.strip()
+            percent = document.get("percent")
+            if isinstance(percent, int):
+                row["percent"] = percent
+                row["percentLabel"] = f"{percent}%"
+            found.append(row)
+        return {"discounts": found}
 
     def list_recent_orders(self, customer_id: str) -> list[dict]:
         completed = self._completed_order_ids(customer_id)

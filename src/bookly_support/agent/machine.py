@@ -7,6 +7,12 @@ from datetime import date, datetime
 from typing import Protocol
 
 from bookly_support.agent.allowlist import run_tool
+from bookly_support.agent.articles import (
+    article_named,
+    is_policy_question,
+    match_article,
+    normalize_article,
+)
 from bookly_support.agent.reasons import classify_reason
 from bookly_support.agent.eligibility import is_eligible
 from bookly_support.agent.resolve import (
@@ -15,6 +21,7 @@ from bookly_support.agent.resolve import (
     asks_for_recommendation,
     asks_for_return,
     asks_order_status,
+    asks_own_discount,
     asks_too_late,
     book_question,
     hedges_store_credit_exception,
@@ -24,9 +31,12 @@ from bookly_support.agent.resolve import (
     is_password_reset,
     is_in_progress,
     named_orders,
+    quoted_order_ids,
     resolve_order,
     resolve_status,
+    title_matches,
     wants_return_in_play,
+    where_is_named,
 )
 from bookly_support.agent.window import iso_day, spoken_date
 from bookly_support.agent.sentiment import label_sentiment
@@ -50,16 +60,17 @@ from bookly_support.agent.templates import (
     missing_order,
     no_order_in_progress,
     not_completed,
+    customer_discounts,
     order_status,
     order_status_choices,
     outside_window,
-    password_refused,
     past_window_why,
     recommend_reply,
     refund_choice,
     still_sending,
     week_ambiguous,
     week_none,
+    which_topic,
 )
 
 
@@ -84,6 +95,15 @@ class ReturnStore(Protocol):
 
     def match_catalog_title(self, text: str) -> str | None:
         """The catalog title named in this message, or None."""
+
+    def policy_articles(self) -> list[dict]:
+        """Shop articles, with the example questions used to match one."""
+
+    def get_policy_article(self, article_id: str) -> dict | None:
+        """One article. The return-window day count comes from the existing policy."""
+
+    def list_customer_discounts(self, customer_id: str) -> dict:
+        """Discount codes stored for this customer."""
 
     def issue_goodwill_discount(self, customer_id: str, order_id: str, now: datetime) -> dict:
         """One 20% code for this customer and order, or the code already stored."""
@@ -167,7 +187,9 @@ class Machine:
         subject = _about_subject(self._store, session, message) if kind else None
         if kind and subject and session.phase != "closed":
             return self._about(session, subject, kind)
-        if session.phase not in {"write", "empathy", "closed"} and asks_order_status(message):
+        if session.phase not in {"write", "empathy", "closed"} and self._is_status_question(
+            session, message
+        ):
             return self._status(session, message, today)
         if session.phase == "done":
             return self._done(session, message, now)
@@ -205,6 +227,13 @@ class Machine:
             )
         if asks_for_recommendation(message):
             return self._recommend(session)
+        if is_password_reset(message):
+            return self._sign_in(session)
+        if asks_own_discount(message):
+            return self._own_discount(session)
+        policy = self._policy_turn(session, message)
+        if policy is not None:
+            return policy
         return Turn(
             template=ask_anything_else(),
             instruction="Ask if they need help with anything else. Do not mention orders, money, dates, or cards.",
@@ -266,11 +295,12 @@ class Machine:
 
     def _identify(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         if is_password_reset(message):
-            return Turn(
-                template=password_refused(),
-                instruction="Say, in English, that this desk can help with a return and cannot reset a password.",
-                intent="out_of_scope",
-            )
+            return self._sign_in(session)
+        if asks_own_discount(message):
+            return self._own_discount(session)
+        policy = self._policy_turn(session, message)
+        if policy is not None:
+            return policy
         if asks_too_late(message):
             return self._too_late(session, message, today, now)
 
@@ -399,12 +429,7 @@ class Machine:
 
     def _reason(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         if is_password_reset(message):
-            return Turn(
-                template=password_refused(),
-                instruction="Say, in English, that this desk can help with a return and cannot reset a password.",
-                intent="out_of_scope",
-                step="Step: why it's coming back",
-            )
+            return self._sign_in(session)
         if session.order_id is None or not session.title:
             session.phase = "identify_order"
             return self._identify(session, message, today, now)
@@ -829,6 +854,126 @@ class Machine:
             step="Step: why it's coming back",
         )
 
+    def _is_status_question(self, session: Session, message: str) -> bool:
+        """Order status, including 'where is The Night Circus?'."""
+
+        if asks_order_status(message):
+            return True
+        if not where_is_named(message):
+            return False
+        orders = self._store.list_recent_orders(session.customer_id)
+        return bool(title_matches(message, orders) or quoted_order_ids(message, orders))
+
+    def _sign_in(self, session: Session) -> Turn:
+        """The sign-in article. This desk does not send a code or confirm an account."""
+
+        return self._article_turn(session, "sign-in")
+
+    def _own_discount(self, session: Session) -> Turn:
+        """Her code, from the discounts collection. The checkout article is a different question."""
+
+        payload = run_tool(
+            session.phase,
+            "list_customer_discounts",
+            lambda: self._store.list_customer_discounts(session.customer_id),
+        )
+        required: list[str] = []
+        for row in payload.get("discounts") or []:
+            if not isinstance(row, dict):
+                continue
+            code = row.get("code")
+            if isinstance(code, str) and code.strip():
+                required.append(code.strip())
+            label = row.get("percentLabel")
+            if isinstance(label, str) and label.strip():
+                required.append(label.strip())
+        return Turn(
+            template=customer_discounts(payload),
+            instruction=(
+                "They asked for their discount code. Copy the code from the JSON. "
+                "If the list is empty, say there isn't one on the account. "
+                "Do not invent a code, a percent, or an amount."
+            ),
+            tools=[
+                ToolTrace(
+                    name="list_customer_discounts",
+                    summary="Read the discount codes on this account.",
+                    payload=payload,
+                )
+            ],
+            intent="policy",
+            required=required,
+            step="Step: your discount",
+        )
+
+    def _policy_turn(self, session: Session, message: str) -> Turn | None:
+        """One article when the match is clear. A weak match asks which topic."""
+
+        articles = [normalize_article(article) for article in self._store.policy_articles()]
+        named = article_named(message, articles)
+        if named:
+            return self._article_turn(session, named)
+        if not is_policy_question(message):
+            return None
+        chosen = match_article(message, articles)
+        if chosen:
+            return self._article_turn(session, chosen)
+        return self._which_topic(articles)
+
+    def _article_turn(self, session: Session, article_id: str) -> Turn:
+        article = run_tool(
+            session.phase,
+            "get_policy_article",
+            lambda: self._store.get_policy_article(article_id),
+        )
+        if not isinstance(article, dict) or not article.get("body"):
+            articles = [normalize_article(item) for item in self._store.policy_articles()]
+            return self._which_topic(articles)
+        phrase = article.get("requiredPhrase")
+        required = [phrase] if isinstance(phrase, str) and phrase.strip() else []
+        intent = article.get("intent") if article.get("intent") in {
+            "shipping",
+            "password_reset",
+            "policy",
+        } else "policy"
+        step = "Step: sign-in" if article.get("id") == "sign-in" else "Step: policy"
+        return Turn(
+            template=str(article["body"]),
+            instruction=(
+                "Say the article in the JSON and nothing past it. "
+                "Do not add a day count, a dollar amount, or a code that is not in the article. "
+                "Do not say a code was sent. Do not say whether an email address has an account. "
+                "Do not cancel an order or change an address."
+            ),
+            tools=[
+                ToolTrace(
+                    name="get_policy_article",
+                    summary=f"Read {article.get('topic') or article_id}.",
+                    payload=article,
+                )
+            ],
+            intent=intent,
+            required=required,
+            step=step,
+        )
+
+    def _which_topic(self, articles: list[dict]) -> Turn:
+        choices = [
+            OrderChoice(order_id=article["id"], title=article["topic"], mark="Policy")
+            for article in articles
+            if article.get("id") and article.get("topic")
+        ]
+        return Turn(
+            template=which_topic(),
+            instruction=(
+                "The question did not match one article. Ask which topic she means. "
+                "Do not answer from memory. Do not invent a day count, a dollar amount, or a code."
+            ),
+            intent="clarify",
+            step="Step: which topic",
+            choices=choices,
+        )
+
     def _too_late(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         del now
         orders, listed = self._listed(session)
@@ -840,12 +985,7 @@ class Machine:
     def _which_book(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         del now
         if is_password_reset(message):
-            return Turn(
-                template=password_refused(),
-                instruction="Say, in English, that this desk can help with a return and cannot reset a password.",
-                intent="out_of_scope",
-                step="Step: which book",
-            )
+            return self._sign_in(session)
         orders, listed = self._listed(session)
         delivered = [order for order in orders if _is_delivered(order)]
         chosen = named_orders(message, orders)
@@ -858,12 +998,7 @@ class Machine:
     def _exception_why(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         del today
         if is_password_reset(message):
-            return Turn(
-                template=password_refused(),
-                instruction="Say, in English, that this desk can help with a return and cannot reset a password.",
-                intent="out_of_scope",
-                step="Step: what happened",
-            )
+            return self._sign_in(session)
         if session.order_id is None or not session.title:
             session.phase = "which_book"
             return self._which_book(session, message, now.date(), now)

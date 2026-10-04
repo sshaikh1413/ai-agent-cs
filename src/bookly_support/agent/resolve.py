@@ -89,7 +89,7 @@ _PRONOUN_TITLE = re.compile(
 
 
 _STATUS_ASK = (
-    re.compile(r"\bwhere(?:'s| is)\s+(?:my|the|this)\s+order\b"),
+    re.compile(r"\bwhere(?:'s| is)\s+(?:my|the|this)\s+(?:order|package|shipment)\b"),
     re.compile(r"\border status\b"),
     re.compile(r"\bwhat(?:'s| is)\s+the status\b"),
     re.compile(r"\bstatus of\b"),
@@ -100,6 +100,31 @@ _STATUS_ASK = (
 
 # Customer-facing trip statuses. "delivered" is not one of these.
 _IN_PROGRESS = frozenset({"packing", "shipped", "on the way", "out for delivery"})
+
+
+_OWN_DISCOUNT = re.compile(
+    r"\bwhat(?:'s|s| is)\s+my\s+(?:discount|promo|coupon)(?:\s+code)?\b"
+    r"|\bmy\s+(?:discount|promo|coupon)\s+code\b"
+    r"|\bdo i have a (?:discount|promo|coupon)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_own_discount(text: str) -> bool:
+    """She wants the code stored on her account, not the checkout instructions."""
+
+    lowered = _clean(text).replace("\u2019", "'").replace("\u2018", "'")
+    return _OWN_DISCOUNT.search(lowered) is not None
+
+
+_WHERE_NAMED = re.compile(r"\bwhere(?:'s| is)\s+(?!do\b|can\b|should\b|would\b)")
+
+
+def where_is_named(text: str) -> bool:
+    """'Where is The Night Circus?' Names a thing. 'Where do you ship?' does not."""
+
+    lowered = _clean(text).replace("\u2019", "'").replace("\u2018", "'")
+    return _WHERE_NAMED.search(lowered) is not None
 
 
 def asks_order_status(text: str) -> bool:

@@ -44,6 +44,9 @@ export type ToolName =
   | "start_return"
   | "recommend_book"
   | "issue_goodwill_discount"
+  | "lookup_catalog"
+  | "get_policy_article"
+  | "list_customer_discounts"
 
 export interface ToolTrace {
   name: ToolName
@@ -116,6 +119,9 @@ const TOOLS = new Set<ToolName>([
   "start_return",
   "recommend_book",
   "issue_goodwill_discount",
+  "lookup_catalog",
+  "get_policy_article",
+  "list_customer_discounts",
 ])
 
 const INTENTS = new Set<AgentIntent>([

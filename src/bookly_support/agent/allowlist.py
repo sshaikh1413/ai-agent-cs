@@ -13,16 +13,21 @@ TOOL_NAMES = (
     "recommend_book",
     "issue_goodwill_discount",
     "lookup_catalog",
+    "get_policy_article",
+    "list_customer_discounts",
 )
 
 Phase = str
 
 # A status question reads orders and does not start a return, including while
 # Mara is waiting for a reason or a refund choice.
-_ORDER_READS = frozenset({"list_recent_orders", "get_order", "lookup_catalog"})
+_ORDER_READS = frozenset(
+    {"list_recent_orders", "get_order", "lookup_catalog", "get_policy_article"}
+)
+_DISCOUNT_READ = frozenset({"list_customer_discounts"})
 
 _ALLOWED: dict[str, frozenset[str]] = {
-    "identify_order": _ORDER_READS,
+    "identify_order": _ORDER_READS | _DISCOUNT_READ,
     "which_book": _ORDER_READS,
     "exception_why": _ORDER_READS,
     "exception_offer": _ORDER_READS | frozenset({"get_refund_options"}),
@@ -30,7 +35,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
     "empathy": frozenset({"recommend_book", "issue_goodwill_discount", "lookup_catalog"}),
     "choose_destination": _ORDER_READS | frozenset({"get_refund_options"}),
     "write": frozenset({"start_return", "lookup_catalog"}),
-    "done": _ORDER_READS | frozenset({"recommend_book"}),
+    "done": _ORDER_READS | frozenset({"recommend_book"}) | _DISCOUNT_READ,
     "closed": frozenset(),
 }
 
