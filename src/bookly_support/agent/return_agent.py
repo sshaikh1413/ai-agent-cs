@@ -157,13 +157,17 @@ def receipt_download(turn: Turn, customer_id: str) -> ReceiptDownload | None:
 
 
 def label_download(turn: Turn, customer_id: str) -> ParcelLabel | None:
-    """Link for the parcel label written with a store-credit exception."""
+    """Link for a parcel label this turn actually has. Absent until one is stored."""
 
     for tool in turn.tools:
-        if tool.name != "start_return":
-            continue
         payload = tool.payload
-        if payload.get("status") != "completed" or not payload.get("exception"):
+        if tool.name == "start_return":
+            if payload.get("status") != "completed" or not payload.get("exception"):
+                continue
+        elif tool.name == "issue_parcel_label":
+            if payload.get("status") != "ready":
+                continue
+        else:
             continue
         label_id = payload.get("labelId")
         if not isinstance(label_id, str) or _LABEL_ID.fullmatch(label_id) is None:

@@ -77,6 +77,23 @@ def asks_for_return(text: str) -> bool:
     return _RETURN_WORD.search(lowered) is not None
 
 
+_PARCEL_LABEL = re.compile(
+    r"\bshipping\s+labels?\b"
+    r"|\bsend\s+(?:me\s+)?the\s+labels?\b"
+    r"|\bwhere(?:'s| is)\s+my\s+labels?\b",
+)
+
+
+def asks_for_parcel_label(text: str) -> bool:
+    """They want the parcel label for a return, not a shipping-policy article.
+
+    "How long does shipping take?" is not this. "shipping label?" is.
+    """
+
+    lowered = _clean(text).replace("\u2019", "'").replace("\u2018", "'")
+    return _PARCEL_LABEL.search(lowered) is not None
+
+
 _WHAT = r"what(?:['’]?s| is| was)"
 _AUTHOR_Q = re.compile(r"\bauthor\b|\bwho wrote\b")
 _ABOUT_Q = re.compile(rf"\b{_WHAT}\s+\S.+?\s+about\b")

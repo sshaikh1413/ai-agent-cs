@@ -47,6 +47,7 @@ export type ToolName =
   | "lookup_catalog"
   | "get_policy_article"
   | "list_customer_discounts"
+  | "issue_parcel_label"
 
 export interface ToolTrace {
   name: ToolName
@@ -122,6 +123,7 @@ const TOOLS = new Set<ToolName>([
   "lookup_catalog",
   "get_policy_article",
   "list_customer_discounts",
+  "issue_parcel_label",
 ])
 
 const INTENTS = new Set<AgentIntent>([

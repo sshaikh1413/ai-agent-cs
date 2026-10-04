@@ -210,6 +210,25 @@ def closed() -> str:
     return "Okay. I'll close this chat."
 
 
+def parcel_label_ready(label: dict) -> str:
+    """The stored parcel label. Tracking and carrier are copied from the return."""
+
+    line = (
+        f"The parcel label for {label['title']}, order {label['orderId']}, is ready. "
+        f"Tracking {label['trackingNumber']} on {label['carrier']}."
+    )
+    address = label.get("address")
+    if isinstance(address, str) and address.strip():
+        line += f" It goes to {address.strip()}."
+    return line + " It's ready to download."
+
+
+def no_parcel_label() -> str:
+    """No completed return in this conversation, so no label is invented."""
+
+    return "There isn't a parcel label yet, because no return is done."
+
+
 def which_topic() -> str:
     """A weak article match. The buttons carry the topic names."""
 

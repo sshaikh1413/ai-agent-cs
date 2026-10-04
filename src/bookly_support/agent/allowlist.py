@@ -15,6 +15,7 @@ TOOL_NAMES = (
     "lookup_catalog",
     "get_policy_article",
     "list_customer_discounts",
+    "issue_parcel_label",
 )
 
 Phase = str
@@ -25,18 +26,19 @@ _ORDER_READS = frozenset(
     {"list_recent_orders", "get_order", "lookup_catalog", "get_policy_article"}
 )
 _DISCOUNT_READ = frozenset({"list_customer_discounts"})
+_LABEL = frozenset({"issue_parcel_label"})
 
 _ALLOWED: dict[str, frozenset[str]] = {
-    "identify_order": _ORDER_READS | _DISCOUNT_READ,
-    "which_book": _ORDER_READS,
-    "exception_why": _ORDER_READS,
-    "exception_offer": _ORDER_READS | frozenset({"get_refund_options"}),
-    "ask_reason": _ORDER_READS,
-    "empathy": frozenset({"recommend_book", "issue_goodwill_discount", "lookup_catalog"}),
-    "choose_destination": _ORDER_READS | frozenset({"get_refund_options"}),
-    "write": frozenset({"start_return", "lookup_catalog"}),
-    "done": _ORDER_READS | frozenset({"recommend_book"}) | _DISCOUNT_READ,
-    "closed": frozenset(),
+    "identify_order": _ORDER_READS | _DISCOUNT_READ | _LABEL,
+    "which_book": _ORDER_READS | _LABEL,
+    "exception_why": _ORDER_READS | _LABEL,
+    "exception_offer": _ORDER_READS | frozenset({"get_refund_options"}) | _LABEL,
+    "ask_reason": _ORDER_READS | _LABEL,
+    "empathy": frozenset({"recommend_book", "issue_goodwill_discount", "lookup_catalog"}) | _LABEL,
+    "choose_destination": _ORDER_READS | frozenset({"get_refund_options"}) | _LABEL,
+    "write": frozenset({"start_return", "lookup_catalog"}) | _LABEL,
+    "done": _ORDER_READS | frozenset({"recommend_book"}) | _DISCOUNT_READ | _LABEL,
+    "closed": _LABEL,
 }
 
 

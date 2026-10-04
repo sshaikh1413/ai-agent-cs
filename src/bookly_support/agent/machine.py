@@ -18,6 +18,7 @@ from bookly_support.agent.eligibility import is_eligible
 from bookly_support.agent.resolve import (
     accepts_store_credit_exception,
     asked_title,
+    asks_for_parcel_label,
     asks_for_recommendation,
     asks_for_return,
     asks_order_status,
@@ -59,7 +60,9 @@ from bookly_support.agent.templates import (
     list_orders,
     missing_order,
     no_order_in_progress,
+    no_parcel_label,
     not_completed,
+    parcel_label_ready,
     customer_discounts,
     order_status,
     order_status_choices,
@@ -122,6 +125,14 @@ class ReturnStore(Protocol):
     ) -> dict:
         """Write the return, or return the receipt already stored."""
 
+    def issue_parcel_label(
+        self,
+        customer_id: str,
+        return_id: str | None = None,
+        order_id: str | None = None,
+    ) -> dict:
+        """The parcel label for a completed return, or status none when there isn't one."""
+
 
 @dataclass
 class ToolTrace:
@@ -183,6 +194,10 @@ class Machine:
         self._store = store
 
     def step(self, session: Session, message: str, *, today: date, now: datetime) -> Turn:
+        if session.phase == "write":
+            return self._write(session, today, now)
+        if asks_for_parcel_label(message):
+            return self._parcel_label(session)
         kind = book_question(message)
         subject = _about_subject(self._store, session, message) if kind else None
         if kind and subject and session.phase != "closed":
@@ -193,8 +208,6 @@ class Machine:
             return self._status(session, message, today)
         if session.phase == "done":
             return self._done(session, message, now)
-        if session.phase == "write":
-            return self._write(session, today, now)
         if session.phase == "choose_destination":
             return self._choose(session, message, today, now)
         if session.phase == "ask_reason":
@@ -247,7 +260,6 @@ class Machine:
         session.phase = "identify_order"
         session.order_id = None
         session.destination = None
-        session.return_id = None
         session.reason = None
         session.reason_kind = None
         session.sentiment = None
@@ -255,6 +267,65 @@ class Machine:
         session.genre = None
         session.exception = False
         return self._identify(session, message, now.date(), now)
+
+    def _parcel_label(self, session: Session) -> Turn:
+        """The label for this conversation's completed return, or a line that invents none."""
+
+        return_id = session.return_id if isinstance(session.return_id, str) and session.return_id else None
+        order_id = session.order_id if isinstance(session.order_id, str) and session.order_id else None
+        if return_id is None and not (session.phase == "done" and order_id is not None):
+            return self._no_parcel_label()
+        result = run_tool(
+            session.phase,
+            "issue_parcel_label",
+            lambda: self._store.issue_parcel_label(
+                session.customer_id,
+                return_id=return_id,
+                order_id=order_id,
+            ),
+        )
+        if result.get("status") != "ready" or not result.get("labelId") or not result.get("trackingNumber"):
+            return self._no_parcel_label()
+        required = [
+            str(result["trackingNumber"]),
+            str(result["carrier"]),
+            str(result["title"]),
+            str(result["orderId"]),
+        ]
+        return Turn(
+            template=parcel_label_ready(result),
+            instruction=(
+                "The parcel label for the completed return is ready. "
+                "Copy the tracking number, the carrier, the title, and the order id from the JSON. "
+                "Say the label is ready to download. "
+                "Do not name a carrier that is not in the JSON. "
+                "Do not invent a tracking number or a download address. "
+                "Do not ask which policy topic they mean."
+            ),
+            tools=[
+                ToolTrace(
+                    name="issue_parcel_label",
+                    summary=f"Parcel label {result['labelId']} for {result['orderId']}.",
+                    payload=result,
+                )
+            ],
+            intent="shipping",
+            required=required,
+            step="Step: parcel label",
+        )
+
+    def _no_parcel_label(self) -> Turn:
+        return Turn(
+            template=no_parcel_label(),
+            instruction=(
+                "No return is done in this conversation. "
+                "Say there isn't a parcel label yet because no return is done. "
+                "Do not invent a tracking number, a carrier, or a label. "
+                "Do not list policy topics and do not guess an article."
+            ),
+            intent="clarify",
+            step="Step: parcel label",
+        )
 
     def _recommend(self, session: Session) -> Turn:
         seed = session.order_id or session.customer_id

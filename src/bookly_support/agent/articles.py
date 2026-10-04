@@ -18,7 +18,12 @@ from bookly_support.agent.destination import (
     MIN_SIMILARITY,
     shared_embedding_model,
 )
-from bookly_support.agent.resolve import asks_for_return, asks_order_status, asks_own_discount
+from bookly_support.agent.resolve import (
+    asks_for_parcel_label,
+    asks_for_return,
+    asks_order_status,
+    asks_own_discount,
+)
 
 # Original Bookly text. Not copied from another shop's help pages.
 ARTICLES: tuple[dict, ...] = (
@@ -384,7 +389,7 @@ def is_policy_question(text: str) -> bool:
     return desk instead of opening the topic list.
     """
 
-    if asks_order_status(text) or asks_own_discount(text):
+    if asks_order_status(text) or asks_own_discount(text) or asks_for_parcel_label(text):
         return False
     if _CUE.search(text) is None:
         return False

@@ -1,4 +1,4 @@
-"""Prepaid parcel label for a store-credit exception. Built from stored records.
+"""Prepaid parcel label. Built from stored records.
 
 The carrier name is ours. Nothing here calls FedEx, UPS, or any other carrier.
 """
@@ -83,7 +83,7 @@ def render_parcel_label(
     pdf.multi_cell(
         0,
         6,
-        "Issued by Bookly for a store-credit return. No carrier was called.",
+        "Issued by Bookly. No carrier was called.",
     )
     return bytes(pdf.output())
 

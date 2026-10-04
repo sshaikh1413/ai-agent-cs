@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 from datetime import date, datetime, timezone
 
-from pymongo import MongoClient
+from pymongo import MongoClient, ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from bookly_support.agent.articles import normalize_article, public_article
@@ -351,6 +351,40 @@ class MongoStore:
                 result["address"] = address
         return result
 
+    def issue_parcel_label(
+        self,
+        customer_id: str,
+        return_id: str | None = None,
+        order_id: str | None = None,
+    ) -> dict:
+        """The parcel label for a completed return, creating one when the receipt had none.
+
+        A card refund stores a receipt only. This writes Bookly Parcel and a made-up
+        tracking number onto that return, then the label document. A second call
+        returns the same tracking number. No carrier is called.
+        """
+
+        document = self._completed_for_label(customer_id, return_id, order_id)
+        if document is None:
+            return {"status": "none"}
+        tracking, carrier, label_id = self._label_identity(customer_id, document)
+        title = self._stored_return_title(customer_id, document) or "this book"
+        result = {
+            "status": "ready",
+            "labelId": label_id,
+            "trackingNumber": tracking,
+            "carrier": carrier,
+            "returnId": document["_id"],
+            "orderId": document.get("orderId"),
+            "title": title,
+            "receiptId": document.get("receiptId"),
+        }
+        self._ensure_label(customer_id, result)
+        address = self._address_text(customer_id)
+        if address:
+            result["address"] = address
+        return result
+
     def latest_completed_return(self, customer_id: str) -> dict | None:
         """Newest completed return for this customer: stored title, and reason text if any."""
 
@@ -577,6 +611,71 @@ class MongoStore:
             self._ensure_label(customer_id, result)
         return result
 
+    def _completed_for_label(
+        self,
+        customer_id: str,
+        return_id: str | None,
+        order_id: str | None,
+    ) -> dict | None:
+        document = None
+        if isinstance(return_id, str) and return_id.strip():
+            document = self._db.returns.find_one(
+                completed_return_by_id(customer_id, return_id.strip())
+            )
+        if document is None and isinstance(order_id, str) and order_id.strip():
+            document = self._db.returns.find_one(completed_return(customer_id, order_id.strip()))
+        if document is None or document.get("status") != "completed":
+            return None
+        return document
+
+    def _label_identity(self, customer_id: str, document: dict) -> tuple[str, str, str]:
+        """Tracking, carrier, and label id already stored, or a new Bookly Parcel set."""
+
+        found = _label_identity(document)
+        if found is not None:
+            return found
+        tracking = _new_tracking()
+        carrier = CARRIER_NAME
+        label_id = _new_label_id()
+        updated = self._db.returns.find_one_and_update(
+            {
+                "_id": document["_id"],
+                "customerId": customer_id,
+                "status": "completed",
+                "labelId": {"$exists": False},
+            },
+            {
+                "$set": {
+                    "trackingNumber": tracking,
+                    "carrier": carrier,
+                    "labelId": label_id,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated is not None:
+            stored = _label_identity(updated)
+            if stored is not None:
+                return stored
+        current = self._db.returns.find_one(
+            completed_return_by_id(customer_id, document["_id"])
+        )
+        if current is not None:
+            stored = _label_identity(current)
+            if stored is not None:
+                return stored
+        self._db.returns.update_one(
+            {"_id": document["_id"], "customerId": customer_id, "status": "completed"},
+            {
+                "$set": {
+                    "trackingNumber": tracking,
+                    "carrier": carrier,
+                    "labelId": label_id,
+                }
+            },
+        )
+        return tracking, carrier, label_id
+
     def _ensure_label(self, customer_id: str, result: dict) -> None:
         label_id = result.get("labelId")
         tracking = result.get("trackingNumber")
@@ -640,6 +739,15 @@ def _new_label_id() -> str:
 
 def _new_tracking() -> str:
     return f"BKLY{secrets.token_hex(5).upper()}"
+
+
+def _label_identity(document: dict) -> tuple[str, str, str] | None:
+    tracking = _optional_text(document.get("trackingNumber"))
+    carrier = _optional_text(document.get("carrier"))
+    label_id = _optional_text(document.get("labelId"))
+    if tracking and carrier and label_id:
+        return tracking, carrier, label_id
+    return None
 
 
 def _new_discount_code() -> str:

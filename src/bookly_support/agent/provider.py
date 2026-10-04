@@ -81,6 +81,7 @@ ToolName = Literal[
     "lookup_catalog",
     "get_policy_article",
     "list_customer_discounts",
+    "issue_parcel_label",
 ]
 
 
@@ -99,7 +100,7 @@ class ReceiptDownload(BaseModel):
 
 
 class ParcelLabel(BaseModel):
-    """PDF parcel label written with a store-credit exception."""
+    """PDF parcel label for a completed return."""
 
     label_id: str
     url: str

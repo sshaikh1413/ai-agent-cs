@@ -1,3 +1,4 @@
+import secrets
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -41,6 +42,7 @@ def test_only_the_return_tools_exist() -> None:
         "lookup_catalog",
         "get_policy_article",
         "list_customer_discounts",
+        "issue_parcel_label",
     )
     assert allowed_tools("identify_order") == frozenset(
         {
@@ -49,18 +51,29 @@ def test_only_the_return_tools_exist() -> None:
             "lookup_catalog",
             "get_policy_article",
             "list_customer_discounts",
+            "issue_parcel_label",
         }
     )
     assert "start_return" not in allowed_tools("identify_order")
     assert "get_refund_options" not in allowed_tools("identify_order")
     assert "recommend_book" not in allowed_tools("identify_order")
     assert allowed_tools("ask_reason") == frozenset(
-        {"list_recent_orders", "get_order", "lookup_catalog", "get_policy_article"}
+        {
+            "list_recent_orders",
+            "get_order",
+            "lookup_catalog",
+            "get_policy_article",
+            "issue_parcel_label",
+        }
     )
-    assert allowed_tools("empathy") == frozenset({"recommend_book", "lookup_catalog"})
-    assert allowed_tools("empathy", "other") == frozenset({"recommend_book", "lookup_catalog"})
+    assert allowed_tools("empathy") == frozenset(
+        {"recommend_book", "lookup_catalog", "issue_parcel_label"}
+    )
+    assert allowed_tools("empathy", "other") == frozenset(
+        {"recommend_book", "lookup_catalog", "issue_parcel_label"}
+    )
     assert allowed_tools("empathy", "late_delivery") == frozenset(
-        {"recommend_book", "issue_goodwill_discount", "lookup_catalog"}
+        {"recommend_book", "issue_goodwill_discount", "lookup_catalog", "issue_parcel_label"}
     )
     assert "issue_goodwill_discount" not in allowed_tools("write", "late_delivery")
     assert allowed_tools("choose_destination") == frozenset(
@@ -70,9 +83,12 @@ def test_only_the_return_tools_exist() -> None:
             "get_order",
             "lookup_catalog",
             "get_policy_article",
+            "issue_parcel_label",
         }
     )
-    assert allowed_tools("write") == frozenset({"start_return", "lookup_catalog"})
+    assert allowed_tools("write") == frozenset(
+        {"start_return", "lookup_catalog", "issue_parcel_label"}
+    )
     assert allowed_tools("done") == frozenset(
         {
             "recommend_book",
@@ -81,9 +97,10 @@ def test_only_the_return_tools_exist() -> None:
             "get_order",
             "get_policy_article",
             "list_customer_discounts",
+            "issue_parcel_label",
         }
     )
-    assert allowed_tools("closed") == frozenset()
+    assert allowed_tools("closed") == frozenset({"issue_parcel_label"})
 
 
 def test_gate_does_not_run_a_disallowed_tool() -> None:
@@ -426,6 +443,73 @@ class FakeStore:
                 "address": self.address,
             }
         return result
+
+    def issue_parcel_label(
+        self,
+        customer_id: str,
+        return_id: str | None = None,
+        order_id: str | None = None,
+    ) -> dict:
+        assert customer_id == self.customer_id
+        self.calls.append("issue_parcel_label")
+        document = None
+        if isinstance(return_id, str) and return_id.strip():
+            found = self.repo.returns.get(return_id.strip())
+            if (
+                found is not None
+                and found.get("customerId") == customer_id
+                and found.get("status") == "completed"
+            ):
+                document = found
+        if document is None and isinstance(order_id, str) and order_id.strip():
+            document = self.repo.find_completed_return(customer_id, order_id.strip())
+        if document is None:
+            return {"status": "none"}
+        tracking = document.get("trackingNumber")
+        carrier = document.get("carrier")
+        label_id = document.get("labelId")
+        ready = (
+            isinstance(tracking, str)
+            and tracking.strip()
+            and isinstance(carrier, str)
+            and carrier.strip()
+            and isinstance(label_id, str)
+            and label_id.strip()
+        )
+        if ready:
+            tracking = tracking.strip()
+            carrier = carrier.strip()
+            label_id = label_id.strip()
+        else:
+            tracking = f"BKLY{secrets.token_hex(5).upper()}"
+            carrier = CARRIER_NAME
+            label_id = f"lbl_{secrets.token_hex(6)}"
+            document["trackingNumber"] = tracking
+            document["carrier"] = carrier
+            document["labelId"] = label_id
+        receipt = self.repo.receipts.get(document.get("receiptId"))
+        title = receipt["title"] if isinstance(receipt, dict) and receipt.get("title") else "this book"
+        self.labels[label_id] = {
+            "_id": label_id,
+            "customerId": customer_id,
+            "returnId": document["_id"],
+            "orderId": document["orderId"],
+            "trackingNumber": tracking,
+            "carrier": carrier,
+            "name": self.customer_name,
+            "address": self.address,
+        }
+        return {
+            "status": "ready",
+            "labelId": label_id,
+            "trackingNumber": tracking,
+            "carrier": carrier,
+            "returnId": document["_id"],
+            "orderId": document["orderId"],
+            "title": title,
+            "receiptId": document.get("receiptId"),
+            "address": self.address,
+        }
 
 
 def _becky_store() -> FakeStore:
