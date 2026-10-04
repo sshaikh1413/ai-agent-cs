@@ -268,31 +268,34 @@ export function SupportDesk() {
 
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
-      <header className="shrink-0 bg-primary text-primary-foreground">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <span className="flex size-10 items-center justify-center rounded-lg bg-primary-foreground/10">
+      <header className="min-w-0 shrink-0 bg-primary text-primary-foreground">
+        <div className="mx-auto flex min-w-0 max-w-6xl items-center gap-3 px-4 py-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary-foreground/10">
               <BookOpen aria-hidden="true" />
             </span>
-            <div>
-              <p className="font-serif text-2xl leading-none italic">Bookly</p>
-              <p className="text-sm text-primary-foreground/80">Support desk</p>
+            <div className="min-w-0">
+              <p className="truncate font-serif text-2xl leading-none italic">Bookly</p>
+              <p className="truncate text-sm text-primary-foreground/80">Support desk</p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex shrink-0 flex-nowrap items-center gap-2">
             <Button
               type="button"
               variant="ghost"
               disabled={locked}
-              className="min-h-11 border border-primary-foreground/40 bg-primary-foreground/10 px-3 text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground"
+              className="h-11 min-h-11 shrink-0 border border-primary-foreground/40 bg-primary-foreground/10 px-3 text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground"
               onClick={() => void resetDemo()}
             >
               <RotateCcw />
               Reset demo
             </Button>
-            <div className="flex flex-col items-end gap-1">
-            <p className="font-serif text-lg leading-none">Mara</p>
-            <div role="radiogroup" aria-label="Signed-in reader" className="flex rounded-lg bg-primary-foreground/10 p-0.5">
+            <p className="shrink-0 font-serif text-lg leading-none">Mara</p>
+            <div
+              role="radiogroup"
+              aria-label="Signed-in reader"
+              className="flex h-11 shrink-0 flex-nowrap items-stretch rounded-lg bg-primary-foreground/10"
+            >
               {READERS.map((reader) => {
                 const selected = customerId === reader.id
                 return (
@@ -305,8 +308,8 @@ export function SupportDesk() {
                     disabled={locked}
                     className={
                       selected
-                        ? "min-h-11 bg-primary-foreground px-3 text-primary hover:bg-primary-foreground hover:text-primary"
-                        : "min-h-11 px-3 text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground"
+                        ? "h-11 min-h-11 shrink-0 rounded-lg bg-primary-foreground px-3 text-primary hover:bg-primary-foreground hover:text-primary"
+                        : "h-11 min-h-11 shrink-0 rounded-lg px-3 text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground"
                     }
                     onClick={() => signIn(reader.id)}
                   >
@@ -314,7 +317,6 @@ export function SupportDesk() {
                   </Button>
                 )
               })}
-            </div>
             </div>
           </div>
         </div>
