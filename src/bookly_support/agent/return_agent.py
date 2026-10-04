@@ -34,11 +34,14 @@ class ReturnAgent:
         customer = self.store.get_customer(customer_id)
         name = customer["name"] if customer and customer.get("name") else customer_id
         orders = self.store.list_recent_orders(customer_id)
+        prompts = [
+            "I want to return a product",
+            "Where is my order",
+            "How long does shipping take?",
+        ]
         prompt_order = _newest_delivered(orders)
         if customer_id == "cust_bob" and prompt_order:
-            follow_up = f"I want to return {prompt_order['title']}"
-        else:
-            follow_up = "the one from about a week ago"
+            prompts.insert(1, f"I want to return {prompt_order['title']}")
         return DeskInfo(
             agent_name="Mara",
             customer_id=customer_id,
@@ -62,12 +65,7 @@ class ReturnAgent:
                 )
                 for order in orders
             ],
-            prompts=[
-                "I want to return a product",
-                follow_up,
-                "Where is my order",
-                "How long does shipping take?",
-            ],
+            prompts=prompts,
             profile=list(PROFILE_LINES),
             opening=_welcome(*self._visit(customer_id), _customer_name(customer)),
         )
