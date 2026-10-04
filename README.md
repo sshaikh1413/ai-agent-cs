@@ -69,6 +69,14 @@ Pydantic AI 2.48.0 sends `extra_headers` on each Anthropic messages request. Thi
 
 ## Run locally
 
+From the repo root, one command installs the Python packages and the chat UI:
+
+```bash
+npm install
+```
+
+That runs `uv sync` into `.venv`, then `npm install` in `frontend`.
+
 API on port **8642** (binds `0.0.0.0`):
 
 ```bash
