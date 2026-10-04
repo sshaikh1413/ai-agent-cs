@@ -249,6 +249,8 @@ async def handle_voice(websocket: WebSocket, agent_factory: Callable[[], object]
                     log.warning("Voice models failed: %s", type(exc).__name__)
                     enqueue(("json", {"type": "error", "message": _VOICE_ERROR}))
                     continue
+            # audible() includes the post-playback tail, so speaker echo does not
+            # open a turn. Interrupt audio captured during that window is kept.
             detector.set_mara_speaking(speaker.audible())
             samples = pcm16_to_float(raw)
             for event in detector.push_audio(samples, vad):
