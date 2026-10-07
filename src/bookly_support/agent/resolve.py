@@ -1,15 +1,15 @@
-"""Match a customer sentence to an order or a refund destination."""
+"""Closed phrases and order matching. The deterministic fallback for ``understand``.
+
+In production Claude labels each message (see ``understand``). These functions
+are the fallback when Claude is unavailable and the default in the pure tests.
+Order ids and titles are always matched here, against the orders on file.
+"""
 
 from __future__ import annotations
 
 import re
 from datetime import date
 
-from bookly_support.agent.destination import (
-    closest_destination,
-    closest_exception_reply,
-    is_exception_hedge,
-)
 from bookly_support.agent.window import week_matches
 
 _ORDER_ID = re.compile(r"\bBLY-\d+\b", re.IGNORECASE)
@@ -304,6 +304,19 @@ def wants_return_in_play(text: str) -> bool:
     return lowered in {"yes", "i'll take it", "ill take it", "i will take it"}
 
 
+# Neither a clear yes nor a clear no to the store-credit exception.
+_EXCEPTION_HEDGES = frozenset({"why not", "i guess", "whatever"})
+
+
+def is_exception_hedge(text: str) -> bool:
+    """True for a shrug: not a clear yes and not a clear no."""
+
+    cleaned = re.sub(r"\s+", " ", text).strip().lower()
+    cleaned = cleaned.replace("\u2019", "'").replace("\u2018", "'")
+    cleaned = cleaned.strip(" \t.!?,'\"\u2026")
+    return cleaned in _EXCEPTION_HEDGES
+
+
 def hedges_store_credit_exception(text: str) -> bool:
     """A shrug at the store-credit offer. Not a yes, and not a no."""
 
@@ -315,8 +328,8 @@ def accepts_store_credit_exception(text: str) -> bool:
 
     Closed yes phrases stay as they are. "Card is fine" stays on the offer.
     It does not select the Visa. "Why not", "I guess", and "whatever" are not
-    a yes. Any other sentence is embedded against a few acceptance examples
-    and a few refusals. A clear no does not accept.
+    a yes. Any other sentence is left to Claude in ``understand``; here it is
+    not a yes. A clear no does not accept.
     """
 
     if is_exception_hedge(text):
@@ -331,11 +344,7 @@ def accepts_store_credit_exception(text: str) -> bool:
         return True
     if original and store:
         return False
-    if lowered in _YES:
-        return True
-    if closest_destination(lowered) == "original_payment":
-        return False
-    return closest_exception_reply(lowered) == "accept"
+    return lowered in _YES
 
 
 def named_orders(text: str, orders: list[dict]) -> list[dict]:
@@ -412,8 +421,7 @@ def explicit_destination(text: str) -> str | None:
 def destination_choice(text: str) -> str | None:
     """Original payment, store credit, or None when Mara should ask again.
 
-    Closed phrases stay as they are. Anything else is embedded and kept only
-    when one destination is clearly ahead of the other.
+    Closed phrases only. Any other sentence is left to Claude in ``understand``.
     """
 
     lowered = _clean(text)
@@ -426,7 +434,7 @@ def destination_choice(text: str) -> str | None:
         return "original_payment"
     if store:
         return "store_credit"
-    return closest_destination(lowered)
+    return None
 
 
 def _destination_flags(lowered: str) -> tuple[bool, bool]:

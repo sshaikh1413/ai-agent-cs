@@ -20,14 +20,21 @@ from bookly_support.agent.provider import (
 )
 from bookly_support.agent.store import MongoStore
 from bookly_support.agent.templates import opening_line
+from bookly_support.agent.understand import Understander
 from bookly_support.config import ALLOWED_CUSTOMER_IDS, CUSTOMER_ID
 
 
 class ReturnAgent:
-    def __init__(self, store: MongoStore, phraser: ClaudePhraser) -> None:
+    def __init__(
+        self,
+        store: MongoStore,
+        phraser: ClaudePhraser,
+        understander: Understander | None = None,
+    ) -> None:
         self.store = store
         self.phraser = phraser
-        self._machine = Machine(store)
+        self.understander = understander
+        self._machine = Machine(store, understander)
 
     def desk(self, customer_id: str = CUSTOMER_ID) -> DeskInfo:
         customer_id = _allow_customer(customer_id)

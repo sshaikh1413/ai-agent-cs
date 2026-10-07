@@ -1,10 +1,15 @@
-"""Refund destination wording. No Claude and no Atlas."""
+"""Refund destination wording. No Claude and no Atlas.
+
+Closed phrases are matched in code. Any other wording is Claude's label (the
+golden set stands in for it here), and the machine only acts on a destination
+while it is asking for one.
+"""
 
 from datetime import date
 
-from bookly_support.agent.destination import MODEL_NAME
 from bookly_support.agent.machine import Machine, Session
 from bookly_support.agent.resolve import destination_choice, explicit_destination
+from golden_understanding import GOLDEN, key
 from test_allowlist import NOW, TODAY, FakeStore, _order
 
 ORIGINAL = (
@@ -33,19 +38,23 @@ def test_closed_phrases_still_select_a_destination() -> None:
     assert destination_choice("store credit") == "store_credit"
 
 
-def test_unknown_card_wording_is_not_an_explicit_phrase() -> None:
+def test_open_wording_is_left_to_claude_not_the_closed_phrases() -> None:
     assert explicit_destination("card is fine") is None
-    assert explicit_destination("credit on my account") is None
-    assert MODEL_NAME == "BAAI/bge-small-en-v1.5"
+    assert destination_choice("card is fine") is None
+    assert destination_choice("credit on my account") is None
+    assert GOLDEN[key("card is fine")]["destination"] == "original_payment"
+    assert GOLDEN[key("credit on my account")]["destination"] == "store_credit"
 
 
-def test_embedding_maps_card_is_fine_to_the_original_payment() -> None:
+def test_each_wording_selects_its_destination_in_the_machine() -> None:
     for phrase in ORIGINAL:
-        assert destination_choice(phrase) == "original_payment", phrase
+        store, machine, session = _ready()
+        done = machine.step(session, phrase, today=TODAY, now=NOW)
+        assert done.tools[0].payload["destination"] == "original_payment", phrase
     for phrase in STORE:
-        assert destination_choice(phrase) == "store_credit", phrase
-    for phrase in NEITHER:
-        assert destination_choice(phrase) is None, phrase
+        store, machine, session = _ready()
+        done = machine.step(session, phrase, today=TODAY, now=NOW)
+        assert done.tools[0].payload["destination"] == "store_credit", phrase
 
 
 def test_unrelated_words_do_not_start_the_return_and_card_is_fine_does() -> None:

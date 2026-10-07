@@ -1,6 +1,6 @@
 from bookly_support.agent.reasons import classify_reason
 from bookly_support.agent.recommendations import choose_recommendation
-from bookly_support.agent.sentiment import label_sentiment
+from bookly_support.agent.understand import TurnContext, Understanding, validate
 
 
 def test_late_keywords_are_late_delivery_and_everything_else_is_other() -> None:
@@ -44,7 +44,11 @@ def test_catalog_pick_is_stable_for_an_order_and_skips_horror_and_owned() -> Non
     assert len(picks) > 1
 
 
-def test_sentiment_labels_a_negative_sentence_and_a_positive_one() -> None:
-    assert label_sentiment("This book was awful and I hated every page.") == "negative"
-    assert label_sentiment("I loved this wonderful book and it made me so happy!") == "positive"
-    assert label_sentiment("changed my mind") == "neutral"
+def test_sentiment_is_kept_only_when_the_message_is_the_reason() -> None:
+    label = Understanding(intents=["other"], reason_kind="other", sentiment="negative")
+    on_reason = validate(label, TurnContext(phase="ask_reason"))
+    assert on_reason.sentiment == "negative"
+    assert on_reason.reason_kind == "other"
+    elsewhere = validate(label, TurnContext(phase="choose_destination"))
+    assert elsewhere.sentiment is None
+    assert elsewhere.reason_kind is None

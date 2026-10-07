@@ -12,6 +12,7 @@ from bookly_support.agent.phrasing import ClaudePhraser
 from bookly_support.agent.provider import AgentProvider, ChatReply, ChatRequest, DeskInfo
 from bookly_support.agent.return_agent import ReturnAgent
 from bookly_support.agent.store import MongoStore
+from bookly_support.agent.understand import ClaudeUnderstander
 from bookly_support.config import ALLOWED_CUSTOMER_IDS, CUSTOMER_ID, load_settings
 from bookly_support.voice.socket import handle_voice
 
@@ -30,7 +31,11 @@ app.add_middleware(
 def build_provider() -> ReturnAgent:
     settings = load_settings()
     store = MongoStore(settings.mongodb_uri)
-    return ReturnAgent(store, ClaudePhraser(settings))
+    return ReturnAgent(
+        store,
+        ClaudePhraser(settings),
+        ClaudeUnderstander.from_settings(settings),
+    )
 
 
 def get_agent() -> ReturnAgent:

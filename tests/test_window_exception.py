@@ -4,9 +4,9 @@ from datetime import date, datetime, timezone
 
 from bookly_support.agent.checker import accept_draft, unsupported_facts
 from bookly_support.agent.label_pdf import CARRIER_NAME, render_parcel_label
+from golden_understanding import GOLDEN, key
 from bookly_support.agent.machine import Machine, Session
 from bookly_support.agent.queries import get_label
-from bookly_support.agent.destination import closest_destination, closest_exception_reply
 from bookly_support.agent.resolve import accepts_store_credit_exception
 from bookly_support.agent.return_agent import label_download, receipt_download
 
@@ -187,18 +187,14 @@ _ACCEPTS = (
 
 def test_clear_yes_accepts_the_exception_and_a_no_does_not() -> None:
     for phrase in _ACCEPTS:
-        assert accepts_store_credit_exception(phrase) is True, phrase
-    assert closest_exception_reply("yeah that'd be great") == "accept"
-    assert closest_exception_reply("yeah that would be great") == "accept"
+        assert GOLDEN[key(phrase)]["offer_reply"] == "accept", phrase
     for phrase in ("no", "never mind", "no thanks"):
         assert accepts_store_credit_exception(phrase) is False, phrase
-    assert closest_exception_reply("never mind") == "refuse"
-    assert closest_exception_reply("no") == "refuse"
+        assert GOLDEN[key(phrase)]["offer_reply"] == "refuse", phrase
     assert accepts_store_credit_exception("the weather is nice today") is False
-    assert closest_exception_reply("the weather is nice today") is None
+    assert "offer_reply" not in GOLDEN[key("the weather is nice today")]
     assert accepts_store_credit_exception("card is fine") is False
-    assert closest_exception_reply("card is fine") is None
-    assert closest_destination("card is fine") == "original_payment"
+    assert GOLDEN[key("card is fine")]["offer_reply"] == "refuse"
 
 
 def test_yeah_thatd_be_great_writes_one_store_credit_exception() -> None:
@@ -521,7 +517,6 @@ def _offered_piranesi() -> tuple[FakeStore, Machine, Session]:
 def test_why_not_asks_to_confirm_then_yes_writes_once() -> None:
     for phrase in ("why not", "I guess", "whatever", "Why not?", "whatever!"):
         assert accepts_store_credit_exception(phrase) is False, phrase
-        assert closest_exception_reply(phrase) is None, phrase
         store, machine, session = _offered_piranesi()
         held = machine.step(session, phrase, today=TODAY, now=NOW)
         assert "start_return" not in store.calls, phrase

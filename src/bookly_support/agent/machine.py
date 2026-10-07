@@ -9,38 +9,26 @@ from typing import Protocol
 from bookly_support.agent.allowlist import run_tool
 from bookly_support.agent.articles import (
     article_named,
-    is_policy_question,
-    match_article,
     normalize_article,
 )
 from bookly_support.agent.reasons import classify_reason
 from bookly_support.agent.eligibility import is_eligible
 from bookly_support.agent.resolve import (
-    accepts_store_credit_exception,
     asked_title,
-    asks_for_parcel_label,
-    asks_for_recommendation,
-    asks_for_return,
-    asks_order_status,
-    asks_own_discount,
-    asks_too_late,
-    book_question,
-    hedges_store_credit_exception,
-    confirms_shown_order,
-    destination_choice,
-    is_decline,
-    is_password_reset,
     is_in_progress,
     named_orders,
-    quoted_order_ids,
     resolve_order,
     resolve_status,
-    title_matches,
-    wants_return_in_play,
-    where_is_named,
 )
 from bookly_support.agent.window import iso_day, spoken_date
-from bookly_support.agent.sentiment import label_sentiment
+from bookly_support.agent.understand import (
+    RuleUnderstander,
+    TurnContext,
+    Understander,
+    Understanding,
+    offer_for,
+    validate,
+)
 from bookly_support.agent.templates import (
     about_book,
     ask_anything_else,
@@ -157,6 +145,8 @@ class Session:
     genre: str | None = None
     recommended_title: str | None = None
     exception: bool = False
+    # This turn's validated label. Not stored with the session.
+    understanding: Understanding | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -189,16 +179,24 @@ class Turn:
         return body
 
 
+# The understander used when none is passed in. The pure tests replace it.
+DEFAULT_UNDERSTANDER: Understander = RuleUnderstander()
+
+
 class Machine:
-    def __init__(self, store: ReturnStore) -> None:
+    """The validator. Claude labels the message; this code decides what may run."""
+
+    def __init__(self, store: ReturnStore, understander: Understander | None = None) -> None:
         self._store = store
+        self._understander = understander
 
     def step(self, session: Session, message: str, *, today: date, now: datetime) -> Turn:
         if session.phase == "write":
             return self._write(session, today, now)
-        if asks_for_parcel_label(message):
+        session.understanding = self._understand(session, message)
+        if _has(session, "parcel_label"):
             return self._parcel_label(session)
-        kind = book_question(message)
+        kind = _about_kind(session)
         subject = _about_subject(self._store, session, message) if kind else None
         if kind and subject and session.phase != "closed":
             return self._about(session, subject, kind)
@@ -222,14 +220,38 @@ class Machine:
             return self._exception_offer(session, message, today, now)
         return self._identify(session, message, today, now)
 
+    def _understand(self, session: Session, message: str) -> Understanding:
+        """One label for this turn, checked against what this step allows."""
+
+        context = self._context(session)
+        understander = self._understander or DEFAULT_UNDERSTANDER
+        return validate(understander.understand(message, context), context)
+
+    def _context(self, session: Session) -> TurnContext:
+        reader = getattr(self._store, "policy_articles", None)
+        articles = [normalize_article(article) for article in (reader() if reader else [])]
+        orders = self._store.list_recent_orders(session.customer_id)
+        return TurnContext(
+            phase=session.phase,
+            offer=offer_for(session.phase, session.exception),
+            exception_open=session.exception,
+            articles=tuple((item["id"], item["topic"]) for item in articles),
+            orders=tuple(
+                (str(order.get("orderId")), str(order.get("title") or ""))
+                for order in orders
+                if order.get("orderId")
+            ),
+            book_in_play=_book_in_play(session),
+        )
+
     def _done(self, session: Session, message: str, now: datetime) -> Turn:
-        if asks_for_return(message):
+        if _has(session, "return_item"):
             return self._return_again(session, message, now)
-        if session.exception and accepts_store_credit_exception(message):
+        if session.exception and _offer_reply(session) == "accept":
             session.destination = "store_credit"
             session.phase = "write"
             return self._write(session, now.date(), now)
-        if is_decline(message):
+        if _has(session, "goodbye"):
             session.phase = "closed"
             session.closed_at = now
             return Turn(
@@ -238,11 +260,11 @@ class Machine:
                 intent="clarify",
                 step="Step: close",
             )
-        if asks_for_recommendation(message):
+        if _has(session, "recommend"):
             return self._recommend(session)
-        if is_password_reset(message):
+        if _has(session, "password_reset"):
             return self._sign_in(session)
-        if asks_own_discount(message):
+        if _has(session, "own_discount"):
             return self._own_discount(session)
         policy = self._policy_turn(session, message)
         if policy is not None:
@@ -365,14 +387,14 @@ class Machine:
         )
 
     def _identify(self, session: Session, message: str, today: date, now: datetime) -> Turn:
-        if is_password_reset(message):
+        if _has(session, "password_reset"):
             return self._sign_in(session)
-        if asks_own_discount(message):
+        if _has(session, "own_discount"):
             return self._own_discount(session)
         policy = self._policy_turn(session, message)
         if policy is not None:
             return policy
-        if asks_too_late(message):
+        if _has(session, "too_late"):
             return self._too_late(session, message, today, now)
 
         orders = _without_completed_returns(
@@ -499,14 +521,13 @@ class Machine:
         return self._ask_why(session, detail, [listed, opened])
 
     def _reason(self, session: Session, message: str, today: date, now: datetime) -> Turn:
-        if is_password_reset(message):
+        if _has(session, "password_reset"):
             return self._sign_in(session)
         if session.order_id is None or not session.title:
             session.phase = "identify_order"
             return self._identify(session, message, today, now)
         session.reason = message.strip()
-        session.reason_kind = classify_reason(session.reason)
-        session.sentiment = label_sentiment(session.reason)
+        session.reason_kind, session.sentiment = _reason_labels(session)
         session.phase = "empathy"
         return self._empathy_and_offer(session, today, now)
 
@@ -514,8 +535,6 @@ class Machine:
         del today
         if session.reason_kind is None and session.reason:
             session.reason_kind = classify_reason(session.reason)
-        if session.sentiment is None and session.reason is not None:
-            session.sentiment = label_sentiment(session.reason)
         title = session.title or "this book"
         sentiment = session.sentiment
         traces: list[ToolTrace] = []
@@ -751,7 +770,8 @@ class Machine:
         )
 
     def _choose(self, session: Session, message: str, today: date, now: datetime) -> Turn:
-        choice = destination_choice(message)
+        understanding = session.understanding
+        choice = understanding.destination if understanding else None
         if choice is None or session.order_id is None:
             return self._offer(session, [])
         session.destination = choice
@@ -928,12 +948,8 @@ class Machine:
     def _is_status_question(self, session: Session, message: str) -> bool:
         """Order status, including 'where is The Night Circus?'."""
 
-        if asks_order_status(message):
-            return True
-        if not where_is_named(message):
-            return False
-        orders = self._store.list_recent_orders(session.customer_id)
-        return bool(title_matches(message, orders) or quoted_order_ids(message, orders))
+        del message
+        return _has(session, "order_status")
 
     def _sign_in(self, session: Session) -> Turn:
         """The sign-in article. This desk does not send a code or confirm an account."""
@@ -984,9 +1000,10 @@ class Machine:
         named = article_named(message, articles)
         if named:
             return self._article_turn(session, named)
-        if not is_policy_question(message):
+        if not _has(session, "policy_question"):
             return None
-        chosen = match_article(message, articles)
+        understanding = session.understanding
+        chosen = understanding.article_id if understanding else None
         if chosen:
             return self._article_turn(session, chosen)
         return self._which_topic(articles)
@@ -1055,42 +1072,41 @@ class Machine:
 
     def _which_book(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         del now
-        if is_password_reset(message):
+        if _has(session, "password_reset"):
             return self._sign_in(session)
         orders, listed = self._listed(session)
         delivered = [order for order in orders if _is_delivered(order)]
         chosen = named_orders(message, orders)
         if len(chosen) == 1:
             return self._open_window(session, chosen[0], today, listed)
-        if len(delivered) == 1 and confirms_shown_order(message):
+        if len(delivered) == 1 and _offer_reply(session) == "accept":
             return self._open_window(session, delivered[0], today, listed)
         return self._window_list(session, orders, today, listed)
 
     def _exception_why(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         del today
-        if is_password_reset(message):
+        if _has(session, "password_reset"):
             return self._sign_in(session)
         if session.order_id is None or not session.title:
             session.phase = "which_book"
             return self._which_book(session, message, now.date(), now)
-        if wants_return_in_play(message):
+        if _offer_reply(session) == "accept":
             if isinstance(session.reason, str) and session.reason.strip():
                 session.phase = "exception_offer"
                 return self._offer_exception(session)
             return self._reask_exception(session, now.date())
         session.reason = message.strip()
-        session.reason_kind = classify_reason(session.reason)
-        session.sentiment = label_sentiment(session.reason)
+        session.reason_kind, session.sentiment = _reason_labels(session)
         session.phase = "exception_offer"
         return self._offer_exception(session)
 
     def _exception_offer(self, session: Session, message: str, today: date, now: datetime) -> Turn:
-        if accepts_store_credit_exception(message):
+        if _offer_reply(session) == "accept":
             session.destination = "store_credit"
             session.exception = True
             session.phase = "write"
             return self._write(session, today, now)
-        if hedges_store_credit_exception(message):
+        if _offer_reply(session) == "unsure":
             return self._confirm_exception(session)
         return self._offer_exception(session)
 
@@ -1495,3 +1511,31 @@ def _write_summary(result: dict) -> str:
     if result.get("status") == "completed" and result.get("receiptId"):
         return f"Completed return {result['receiptId']}."
     return "The return did not complete."
+
+
+def _has(session: Session, intent: str) -> bool:
+    understanding = session.understanding
+    return understanding is not None and intent in understanding.intents
+
+
+def _about_kind(session: Session) -> str | None:
+    understanding = session.understanding
+    if understanding is None or "about_book" not in understanding.intents:
+        return None
+    return understanding.about
+
+
+def _offer_reply(session: Session) -> str | None:
+    understanding = session.understanding
+    return understanding.offer_reply if understanding else None
+
+
+def _reason_labels(session: Session) -> tuple[str, str | None]:
+    """Claude's reason kind and sentiment. The late-delivery keywords back up a missing kind."""
+
+    understanding = session.understanding
+    kind = understanding.reason_kind if understanding else None
+    sentiment = understanding.sentiment if understanding else None
+    if kind is None:
+        kind = classify_reason(session.reason or "")
+    return kind, sentiment

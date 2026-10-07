@@ -22,7 +22,6 @@ from bookly_support.agent.checker import accept_draft, unsupported_facts
 from bookly_support.agent.recommendations import choose_recommendation
 from bookly_support.agent.resolve import longest_catalog_title
 from bookly_support.agent.return_agent import receipt_download
-from bookly_support.agent.sentiment import label_sentiment
 from bookly_support.agent.label_pdf import CARRIER_NAME
 from bookly_support.agent.returns import commit_return, return_permitted
 
@@ -685,11 +684,12 @@ def test_horror_path_recommends_a_book_and_skips_the_discount() -> None:
     stocked = next(book for book in _CATALOG if book["title"] == expected["title"])
     assert stocked["summary"] not in turn.template
     assert stocked["author"] not in turn.template
-    assert "Thank you for telling me" in turn.template
+    assert "really sorry" in turn.template
     assert "20%" not in turn.template
     assert session.phase == "choose_destination"
     assert session.reason_kind == "other"
-    assert session.sentiment == "positive"
+    # VADER called this positive. Claude's label is negative: she was disappointed.
+    assert session.sentiment == "negative"
 
 
 def test_late_delivery_issues_one_code_and_a_second_call_matches() -> None:
@@ -851,7 +851,7 @@ def test_negative_sentiment_is_stored_on_the_completed_return() -> None:
     reason = "This book was awful and I hated every page."
     machine.step(session, "I want to return Circe", today=TODAY, now=NOW)
     asked = machine.step(session, reason, today=TODAY, now=NOW)
-    assert session.sentiment == label_sentiment(reason) == "negative"
+    assert session.sentiment == "negative"
     assert "really sorry" in asked.template
     assert "recommend_book" not in store.calls
     assert "issue_goodwill_discount" not in store.calls

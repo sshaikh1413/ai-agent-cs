@@ -60,31 +60,37 @@ def _safe_error(exc: Exception) -> str:
     return f"{prefix}: {detail[:300]}"
 
 
+def anthropic_model(settings: Settings, *, max_tokens: int = 2048) -> AnthropicModel:
+    """The one Anthropic model client for this desk, with the workspace header on every request."""
+
+    header = {WORKSPACE_HEADER: settings.anthropic_workspace_id}
+    client = AsyncAnthropic(
+        api_key=settings.anthropic_api_key,
+        default_headers=header,
+    )
+    model_settings = AnthropicModelSettings(
+        extra_headers=dict(header),
+        max_tokens=max_tokens,
+    )
+    return AnthropicModel(
+        settings.model_name,
+        provider=AnthropicProvider(anthropic_client=client),
+        settings=model_settings,
+    )
+
+
 class ClaudePhraser:
     def __init__(self, settings: Settings) -> None:
         if settings.pydantic_model != PYDANTIC_MODEL:
             raise RuntimeError("The phrasing model must be anthropic:claude-sonnet-5-5.")
-        header = {WORKSPACE_HEADER: settings.anthropic_workspace_id}
-        client = AsyncAnthropic(
-            api_key=settings.anthropic_api_key,
-            default_headers=header,
-        )
-        model_settings = AnthropicModelSettings(
-            extra_headers=dict(header),
-            max_tokens=2048,
-        )
-        model = AnthropicModel(
-            settings.model_name,
-            provider=AnthropicProvider(anthropic_client=client),
-            settings=model_settings,
-        )
+        model = anthropic_model(settings)
         self.model_string = PYDANTIC_MODEL
         self.calls = 0
         self.errors: list[str] = []
         self._agent = Agent(
             model,
             system_prompt=_SYSTEM,
-            model_settings=model_settings,
+            model_settings=model.settings,
             retries=1,
         )
 

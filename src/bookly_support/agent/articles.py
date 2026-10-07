@@ -1,23 +1,16 @@
-"""Bookly's own short policy articles, and the embedding match that picks one.
+"""Bookly's own short policy articles.
 
 The return window is not stored here. `{days}` is filled from the existing
 policy document when an article is read, so there is one number only.
-Example sentences are ours. They are compared as embeddings, not as a phrase
-list. fastembed `bge-small-en-v1.5` is the same model that maps refund wording.
+Claude picks one article id from this list in ``understand``; the machine
+keeps it only when the id is on the list. The example sentences stay with each
+article as reference questions for the evaluation set.
 """
 
 from __future__ import annotations
 
 import re
-import threading
 
-import numpy as np
-
-from bookly_support.agent.destination import (
-    CLEAR_MARGIN,
-    MIN_SIMILARITY,
-    shared_embedding_model,
-)
 from bookly_support.agent.resolve import (
     asks_for_parcel_label,
     asks_for_return,
@@ -280,12 +273,6 @@ _CUE = re.compile(
     re.IGNORECASE,
 )
 
-_lock = threading.Lock()
-_cached_key: tuple[str, ...] | None = None
-_cached_labels: tuple[str, ...] | None = None
-_cached_matrix: np.ndarray | None = None
-
-
 def article_document(article: dict) -> dict:
     """The Atlas shape. The return-window number is not copied onto the article."""
 
@@ -400,55 +387,3 @@ def is_policy_question(text: str) -> bool:
     ):
         return False
     return True
-
-
-def match_article(text: str, articles: list[dict]) -> str | None:
-    """The article id when one set of examples is clearly ahead, or None."""
-
-    cleaned = text.strip()
-    rows = [normalize_article(article) for article in articles if article.get("examples")]
-    if not cleaned or not rows:
-        return None
-    model = shared_embedding_model()
-    labels, matrix = _example_matrix(model, rows)
-    query = _unit(np.stack(list(model.embed([cleaned]))))
-    scores = matrix @ query[0]
-    best: dict[str, float] = {}
-    for label, score in zip(labels, scores, strict=True):
-        value = float(score)
-        if label not in best or value > best[label]:
-            best[label] = value
-    if not best:
-        return None
-    ranked = sorted(best.items(), key=lambda item: item[1], reverse=True)
-    winner_id, winner = ranked[0]
-    other = ranked[1][1] if len(ranked) > 1 else 0.0
-    if winner < MIN_SIMILARITY or winner - other < CLEAR_MARGIN:
-        return None
-    return winner_id
-
-
-def _example_matrix(model, articles: list[dict]) -> tuple[tuple[str, ...], np.ndarray]:
-    global _cached_key, _cached_labels, _cached_matrix
-    labels: list[str] = []
-    texts: list[str] = []
-    for article in articles:
-        for example in article["examples"]:
-            labels.append(article["id"])
-            texts.append(example)
-    key = tuple(texts)
-    if _cached_key == key and _cached_labels is not None and _cached_matrix is not None:
-        return _cached_labels, _cached_matrix
-    with _lock:
-        if _cached_key == key and _cached_labels is not None and _cached_matrix is not None:
-            return _cached_labels, _cached_matrix
-        matrix = _unit(np.stack(list(model.embed(texts))))
-        _cached_key = key
-        _cached_labels = tuple(labels)
-        _cached_matrix = matrix
-        return _cached_labels, matrix
-
-
-def _unit(vectors: np.ndarray) -> np.ndarray:
-    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    return vectors / np.clip(norms, 1e-12, None)

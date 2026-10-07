@@ -6,7 +6,6 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from bookly_support.agent.checker import accept_draft, unsupported_facts
-from bookly_support.agent.destination import closest_destination
 from bookly_support.agent.phrasing import phrasing_document
 from bookly_support.agent.provider import ChatRequest
 from bookly_support.agent.reset import PROTECTED_ORDER_IDS, reset_bookly_demo
@@ -349,8 +348,6 @@ def test_checker_replaces_a_recited_reason_and_a_gift_they_did_not_mention() -> 
 
 
 def test_card_is_fine_still_selects_visa() -> None:
-    assert destination_choice("card is fine") == "original_payment"
-    assert closest_destination("card is fine") == "original_payment"
     _store, machine, session = _ready()
     done = machine.step(session, "card is fine", today=TODAY, now=NOW)
     assert done.tools[0].payload["destination"] == "original_payment"
