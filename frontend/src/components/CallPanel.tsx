@@ -28,6 +28,8 @@ export function CallPanel({
   const [deskError, setDeskError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const session = useRef<VoiceSession | null>(null)
+  // The last button pressed, so its echoed order id shows as the title.
+  const chosen = useRef<{ orderId: string; title: string } | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -43,7 +45,10 @@ export function CallPanel({
       },
       onUser(text) {
         setBusy(true)
-        setLines((current) => [...current, { id: crypto.randomUUID(), role: "user", text }])
+        const pick = chosen.current
+        chosen.current = null
+        const shown = pick && text === pick.orderId ? pick.title : text
+        setLines((current) => [...current, { id: crypto.randomUUID(), role: "user", text: shown }])
       },
       onReply(reply: VoiceReply) {
         setBusy(false)
@@ -89,7 +94,8 @@ export function CallPanel({
     node.scrollTop = node.scrollHeight
   }, [lines, micError, deskError])
 
-  function choose(orderId: string) {
+  function choose(orderId: string, title: string) {
+    chosen.current = { orderId, title }
     session.current?.sendText(orderId)
   }
 
@@ -150,7 +156,7 @@ export function CallPanel({
                             variant="outline"
                             disabled={busy}
                             className="h-auto min-h-11 w-full items-start justify-start whitespace-normal px-3 py-2 text-left"
-                            onClick={() => choose(choice.order_id)}
+                            onClick={() => choose(choice.order_id, choice.title)}
                           >
                             <span className="min-w-0">
                               <span className="block font-semibold break-words">{choice.title}</span>

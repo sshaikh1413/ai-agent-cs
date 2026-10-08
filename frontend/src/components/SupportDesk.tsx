@@ -19,7 +19,8 @@ import { CallPanel } from "./CallPanel.tsx"
 import { Composer } from "./Composer.tsx"
 
 type ThreadItem =
-  | { id: string; kind: "user"; text: string }
+  // shown is what the bubble displays when it differs from the message sent, e.g. a title for an order id.
+  | { id: string; kind: "user"; text: string; shown?: string }
   | {
       id: string
       kind: "assistant"
@@ -234,14 +235,14 @@ export function SupportDesk() {
     }
   }
 
-  function send(text: string) {
+  function send(text: string, shown?: string) {
     const message = text.trim()
     if (!message || locked) return
     const pendingId = crypto.randomUUID()
     const prior = items
     setItems([
       ...prior,
-      { id: crypto.randomUUID(), kind: "user", text: message },
+      { id: crypto.randomUUID(), kind: "user", text: message, shown: shown?.trim() || undefined },
       { id: pendingId, kind: "pending" },
     ])
     void run(prior, message, pendingId)
@@ -401,7 +402,7 @@ export function SupportDesk() {
               <ol className="mx-auto flex max-w-3xl flex-col gap-4">
                 {items.map((item) => (
                   <li key={item.id}>
-                    {item.kind === "user" ? <UserBubble text={item.text} /> : null}
+                    {item.kind === "user" ? <UserBubble text={item.shown ?? item.text} /> : null}
                     {item.kind === "assistant" ? (
                       <AssistantBubble
                         item={item}
@@ -623,7 +624,7 @@ function AssistantBubble({
   canSpeak: boolean
   busy: boolean
   onSpeak: () => void
-  onChoose: (orderId: string) => void
+  onChoose: (orderId: string, title: string) => void
 }) {
   return (
     <article className="max-w-[90%] rounded-2xl rounded-bl-md border border-border bg-card px-4 py-3" data-intent={item.intent}>
@@ -666,7 +667,7 @@ function AssistantBubble({
                   variant="outline"
                   disabled={busy}
                   className="h-auto min-h-11 w-full max-w-full items-start justify-start whitespace-normal px-3 py-2 text-left"
-                  onClick={() => onChoose(choice.order_id)}
+                  onClick={() => onChoose(choice.order_id, choice.title)}
                 >
                   <span className="min-w-0">
                     <span className="block font-semibold break-words">{choice.title}</span>
