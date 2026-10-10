@@ -229,6 +229,14 @@ def no_parcel_label() -> str:
     return "There isn't a parcel label yet, because no return is done."
 
 
+def faq_list(*, more: bool = False) -> str:
+    """One page of the FAQ. The buttons carry the questions."""
+
+    if more:
+        return "Here are more questions people ask. Pick one below."
+    return "Here are the questions people ask most. Pick one below."
+
+
 def which_topic() -> str:
     """A weak article match. The buttons carry the topic names."""
 

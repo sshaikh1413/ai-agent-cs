@@ -8,7 +8,13 @@ from typing import Protocol
 
 from bookly_support.agent.allowlist import run_tool
 from bookly_support.agent.articles import (
+    FAQ,
+    FAQ_CHOICE_PREFIX,
+    FAQ_MORE_PREFIX,
+    FAQ_PAGE_SIZE,
     article_named,
+    faq_page,
+    faq_pick,
     normalize_article,
 )
 from bookly_support.agent.reasons import classify_reason
@@ -45,6 +51,7 @@ from bookly_support.agent.templates import (
     exception_completed,
     exception_confirm,
     exception_offer,
+    faq_list,
     late_apology,
     list_orders,
     missing_order,
@@ -194,6 +201,10 @@ class Machine:
     def step(self, session: Session, message: str, *, today: date, now: datetime) -> Turn:
         if session.phase == "write":
             return self._write(session, today, now)
+        if session.phase not in {"empathy", "closed"}:
+            faq = self._faq_turn(session, message)
+            if faq is not None:
+                return faq
         session.understanding = self._understand(session, message)
         if _has(session, "parcel_label"):
             return self._parcel_label(session)
@@ -1044,6 +1055,54 @@ class Machine:
             intent=intent,
             required=required,
             step=step,
+        )
+
+    def _faq_turn(self, session: Session, message: str) -> Turn | None:
+        """A page of FAQ questions, or the article behind a clicked one. The phase does not
+        change, so a return in progress picks up where it was on the next message."""
+
+        picked = faq_pick(message)
+        if picked is not None:
+            session.understanding = None
+            return self._article_turn(session, picked)
+        start = faq_page(message)
+        if start is None:
+            return None
+        session.understanding = None
+        articles = [normalize_article(article) for article in self._store.policy_articles()]
+        topics = {item["id"]: item["topic"] for item in articles}
+        listed = [item for item in FAQ if item["articleId"] in topics]
+        if not listed:
+            return self._which_topic(articles)
+        start = min(start, max(len(listed) - 1, 0))
+        page = listed[start : start + FAQ_PAGE_SIZE]
+        rest = len(listed) - (start + len(page))
+        choices = [
+            OrderChoice(
+                order_id=f"{FAQ_CHOICE_PREFIX}{item['articleId']}",
+                title=item["question"],
+                mark=topics[item["articleId"]],
+            )
+            for item in page
+        ]
+        if rest > 0:
+            choices.append(
+                OrderChoice(
+                    order_id=f"{FAQ_MORE_PREFIX}{start + len(page)}",
+                    title="Show more questions",
+                    mark=f"{rest} more",
+                )
+            )
+        return Turn(
+            template=faq_list(more=start > 0),
+            instruction=(
+                "They asked for the FAQ. Say in one short sentence that these are questions "
+                "people ask, and they can pick one. Do not answer any of them. "
+                "Do not list them; the buttons carry them."
+            ),
+            intent="clarify",
+            step="Step: FAQ",
+            choices=choices,
         )
 
     def _which_topic(self, articles: list[dict]) -> Turn:

@@ -265,6 +265,37 @@ ARTICLES: tuple[dict, ...] = (
     },
 )
 
+# The questions shown when a reader types "FAQ", most asked first. Each answer is
+# the article with that id, read the same way as any policy question. No answer
+# text lives here. The first page is the top five; "Show more questions" pages on.
+FAQ: tuple[dict, ...] = (
+    {"articleId": "returns", "question": "How many days do I have to return a book?"},
+    {"articleId": "refund-timing", "question": "How long does a refund take?"},
+    {"articleId": "shipping-speed", "question": "How long does shipping take, and what does it cost?"},
+    {"articleId": "cancel", "question": "Can I cancel my order?"},
+    {"articleId": "damaged-or-wrong", "question": "What if my book arrives damaged or it's the wrong book?"},
+    {"articleId": "tracking", "question": "How do I track my order?"},
+    {"articleId": "address-change", "question": "Can I change my shipping address?"},
+    {"articleId": "discount-code", "question": "How do I use a discount code?"},
+    {"articleId": "gift-order", "question": "Can I return a gift?"},
+    {"articleId": "sign-in", "question": "I can't sign in. What do I do?"},
+    {"articleId": "where-we-ship", "question": "Do you ship outside the United States?"},
+    {"articleId": "what-we-sell", "question": "Do you sell ebooks or audiobooks?"},
+    {"articleId": "confirmation-email", "question": "I didn't get a confirmation email."},
+    {"articleId": "sales-tax", "question": "Do you charge sales tax?"},
+)
+FAQ_PAGE_SIZE = 5
+# A clicked FAQ button sends this prefix, so a typed "returns" still starts a
+# return instead of reading the article. "faq:<article id>" reads that article;
+# "faq:more:<n>" lists the questions from position n.
+FAQ_CHOICE_PREFIX = "faq:"
+FAQ_MORE_PREFIX = "faq:more:"
+
+_FAQ_ASK = re.compile(
+    r"\b(?:faqs?|f\.a\.q\.?s?|frequently asked(?: questions)?|common questions)\b",
+    re.IGNORECASE,
+)
+
 _CUE = re.compile(
     r"\b(?:polic(?:y|ies)|how long|how many|shipping|password|sign[- ]?in|"
     r"log ?in|login|discount|promo|coupon|ebooks?|audiobooks?|magazines?|"
@@ -367,6 +398,29 @@ def article_named(text: str, articles: list[dict]) -> str | None:
         if cleaned == item["id"].casefold() or cleaned == item["topic"].casefold():
             return item["id"]
     return None
+
+
+def faq_page(text: str) -> int | None:
+    """Where the FAQ list starts: 0 when they ask for the FAQ, n for "Show more questions"."""
+
+    cleaned = text.strip().casefold()
+    if cleaned.startswith(FAQ_MORE_PREFIX):
+        start = cleaned[len(FAQ_MORE_PREFIX):].strip()
+        return int(start) if start.isdigit() and int(start) < len(FAQ) else None
+    if cleaned.startswith(FAQ_CHOICE_PREFIX):
+        return None
+    return 0 if _FAQ_ASK.search(text) else None
+
+
+def faq_pick(text: str) -> str | None:
+    """The article id behind a clicked FAQ question, or None."""
+
+    cleaned = text.strip().casefold()
+    if not cleaned.startswith(FAQ_CHOICE_PREFIX) or cleaned.startswith(FAQ_MORE_PREFIX):
+        return None
+    article_id = cleaned[len(FAQ_CHOICE_PREFIX):].strip()
+    listed = {item["articleId"] for item in FAQ}
+    return article_id if article_id in listed else None
 
 
 def is_policy_question(text: str) -> bool:

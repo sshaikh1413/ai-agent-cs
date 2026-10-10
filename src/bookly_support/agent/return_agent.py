@@ -45,6 +45,7 @@ class ReturnAgent:
             "I want to return a product",
             "Where is my order",
             "How long does shipping take?",
+            "FAQ",
         ]
         prompt_order = _newest_delivered(orders)
         if customer_id == "cust_bob" and prompt_order:
@@ -57,6 +58,7 @@ class ReturnAgent:
                 f"Returns for {name}, who is already signed in.",
                 "Where an order is, from the status stored on that order.",
                 "Shipping, returns, sign-in, and the other shop policies, from Bookly's own articles.",
+                "Type FAQ for the five questions people ask most.",
                 "Why the book is coming back, before any refund.",
                 "A refund to the original card or to store credit, after they choose.",
                 "A one-page PDF receipt after the return is written.",
