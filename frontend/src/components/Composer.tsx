@@ -20,6 +20,22 @@ export function Composer({
   const supported = speechInputSupported()
   const session = useRef<SpeechSession | null>(null)
   const base = useRef("")
+  const box = useRef<HTMLTextAreaElement>(null)
+  const wasDisabled = useRef(disabled)
+
+  // The box is disabled while Mara answers, which drops the cursor. Put it back when she
+  // is done, so the reader can keep typing, unless they have moved to another field.
+  useEffect(() => {
+    if (wasDisabled.current && !disabled) {
+      const active = document.activeElement
+      const elsewhere =
+        active instanceof HTMLElement &&
+        active !== box.current &&
+        (active.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))
+      if (!elsewhere) box.current?.focus()
+    }
+    wasDisabled.current = disabled
+  }, [disabled])
 
   useEffect(() => {
     return () => session.current?.stop()
@@ -83,6 +99,7 @@ export function Composer({
         {label}
       </label>
       <Textarea
+        ref={box}
         id="mara-message"
         value={draft}
         maxLength={2000}
