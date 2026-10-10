@@ -10,7 +10,7 @@ from bookly_support.agent.queries import get_label
 from bookly_support.agent.resolve import accepts_store_credit_exception
 from bookly_support.agent.return_agent import label_download, receipt_download
 
-from test_allowlist import NOW, TODAY, FakeStore, _order
+from test_allowlist import ASK_TITLE_OR_DATE, NOW, TODAY, FakeStore, _order
 from test_demo_reset import _Collection, _Database, _copy
 from bookly_support.agent.reset import reset_bookly_demo
 
@@ -91,11 +91,12 @@ def test_old_title_asks_why_and_yes_writes_one_store_credit_exception() -> None:
     assert session.phase == "exception_why"
     assert session.order_id == "BLY-18440"
     assert why.step == "Step: what happened"
-    assert "past the 30 days" in why.template
+    assert "past our 30-day return window" in why.template
+    assert "You ordered Piranesi" in why.template
     assert "cannot go back on the Visa" in why.template
     assert "store credit" not in why.template.lower()
     assert "4242" not in why.template
-    assert "What happened with it?" in why.template
+    assert "What is the reason for the return?" in why.template
     assert "get_refund_options" not in store.calls
     assert "start_return" not in store.calls
     assert unsupported_facts(why.template, why.payload) == []
@@ -364,9 +365,9 @@ def test_i_will_take_it_stays_on_the_past_window_book() -> None:
     assert session.order_id == "BLY-18440"
     assert session.reason is None
     assert opened.step == "Step: what happened"
-    assert "outside the 30-day return window" in opened.template
+    assert "past our 30-day return window" in opened.template
     assert "cannot go back on the card" in opened.template
-    assert "What happened with it?" in opened.template
+    assert "What is the reason for the return?" in opened.template
     assert "The Midnight Library" not in opened.template
     assert "Klara" not in opened.template
     assert "Visa" not in opened.template
@@ -381,7 +382,7 @@ def test_i_will_take_it_stays_on_the_past_window_book() -> None:
         assert fresh.phase == "exception_why"
         assert fresh.order_id == "BLY-18440"
         assert fresh.reason is None
-        assert "What happened with it?" in held.template
+        assert "What is the reason for the return?" in held.template
         assert "The Midnight Library" not in held.template
         assert "Klara" not in held.template
         assert "Which one do you want to return?" not in held.template
@@ -640,7 +641,8 @@ def test_done_phase_return_lists_books_without_a_completed_return() -> None:
         fresh = FakeStore(_becky_orders())
         again_machine, again_session = _finish_piranesi(fresh)
         turn = again_machine.step(again_session, phrase, today=TODAY, now=NOW)
-        assert turn.template == "Which book do you want to return?", phrase
+        assert turn.template == ASK_TITLE_OR_DATE, phrase
+        assert turn.read_choices is False, phrase
         assert "anything else" not in turn.template.lower(), phrase
         assert turn.step == "Step: which order", phrase
         assert [choice.order_id for choice in turn.choices] == expected_ids, phrase
@@ -706,7 +708,7 @@ def test_asking_for_the_visa_on_the_exception_says_why_and_offers_credit_again()
         assert card.step == "Step: store credit exception", phrase
         assert "past the 30 days" in card.template, phrase
         assert "can't go back on your card" in card.template, phrase
-        assert "store credit for 15.99" in card.template, phrase
+        assert "store credit for $15.99" in card.template, phrase
         assert "Is that acceptable?" not in card.template, phrase
         assert "Visa" not in card.template, phrase
         assert unsupported_facts(card.template, card.payload) == [], phrase

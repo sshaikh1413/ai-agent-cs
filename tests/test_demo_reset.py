@@ -296,10 +296,11 @@ def test_opening_does_not_contain_the_stored_reason() -> None:
 def test_reply_template_does_not_paste_you_said() -> None:
     source = (ROOT / "src" / "bookly_support" / "agent" / "templates.py").read_text()
     assert "You said" not in source
-    heard = empathy_other("Circe", "changed my mind", "neutral")
+    heard = empathy_other("Circe", "changed_mind", "neutral")
     assert "You said" not in heard
     assert "you said" not in heard.lower()
-    assert "I hear you: changed my mind." in heard
+    assert heard == "No problem at all. Plans change."
+    assert "I hear you" not in empathy_other("Circe", "not_for_me", "negative")
     assert "You said" not in late_apology("A Gentleman in Moscow", "it arrived late", None)
 
     phraser = _Recording()

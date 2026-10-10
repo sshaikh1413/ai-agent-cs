@@ -3,6 +3,7 @@ import type { CustomerId, OrderChoice, ParcelLabel, ReceiptDownload, ToolTrace }
 export interface VoiceReply {
   text: string
   spoken: string
+  intent: string
   step: string
   choices: OrderChoice[]
   tools: ToolTrace[]
@@ -20,11 +21,19 @@ interface CallHandlers {
   onUser: (text: string) => void
   onReply: (reply: VoiceReply) => void
   onStatus: (state: string) => void
+  // Mara finished saying the last reply out loud.
+  onSpoken?: () => void
+  // How loud the microphone is right now, 0 to 1, a few times a second.
+  onLevel?: (level: number) => void
   onError: (message: string) => void
   onMicError: (message: string) => void
 }
 
 const MIC_BLOCKED = "The microphone is blocked. Allow it for this site, or type your question."
+const MIC_MISSING = "No microphone was found. Connect one, or type your question."
+const MIC_BUSY =
+  "The microphone is busy or unavailable. Close other apps using it, check your Mac's sound input, or type your question."
+const MIC_FAILED = "The microphone didn't start. Try the call again, or type your question."
 
 export function startVoiceCall(customerId: CustomerId, handlers: CallHandlers): VoiceSession {
   let stopped = false
@@ -75,6 +84,9 @@ export function startVoiceCall(customerId: CustomerId, handlers: CallHandlers): 
     node.onaudioprocess = (event) => {
       if (!ws || ws.readyState !== WebSocket.OPEN || !context) return
       const input = event.inputBuffer.getChannelData(0)
+      let sum = 0
+      for (const value of input) sum += value * value
+      handlers.onLevel?.(Math.min(1, Math.sqrt(sum / Math.max(1, input.length)) * 8))
       const pcm = floatToPcm16(resample(input, context.sampleRate, 16000))
       if (pcm.byteLength > 0) ws.send(pcm)
     }
@@ -98,6 +110,7 @@ export function startVoiceCall(customerId: CustomerId, handlers: CallHandlers): 
     })
     .catch((error: unknown) => {
       if (stopped) return
+      console.error("Bookly voice: microphone failed", error)
       handlers.onMicError(micMessage(error))
     })
 
@@ -141,6 +154,13 @@ export function startVoiceCall(customerId: CustomerId, handlers: CallHandlers): 
       handlers.onStatus("speaking")
       return
     }
+    if (message.type === "audio_end") {
+      const wait = (player?.remaining() ?? 0) * 1000 + 150
+      window.setTimeout(() => {
+        if (!stopped) handlers.onSpoken?.()
+      }, wait)
+      return
+    }
     if (message.type === "barge_in" || message.type === "audio_stop") {
       player?.stop()
       return
@@ -177,33 +197,52 @@ async function openMicrophone(): Promise<{ context: AudioContext; stream: MediaS
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("unsupported")
   }
-  const context = new AudioContext()
-  await context.resume()
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  })
+  // The audio graph runs at the microphone's own rate. Bluetooth headsets (AirPods in
+  // call mode run at 16 or 24 kHz) differ from the speaker's 48 kHz, and Chrome will not
+  // connect a microphone to a context at a different rate. Opening the mic first also
+  // lets macOS switch the headset into call mode before the rate is read.
+  const rate = stream.getAudioTracks()[0]?.getSettings().sampleRate
+  let context: AudioContext | null = null
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    })
+    context = rate ? new AudioContext({ sampleRate: rate }) : new AudioContext()
+    await context.resume()
+    context.createMediaStreamSource(stream).disconnect()
     return { context, stream }
   } catch (error) {
-    await context.close()
+    await context?.close()
+    if (!rate) {
+      stream.getTracks().forEach((track) => track.stop())
+      throw error
+    }
+  }
+  // That rate was refused: fall back to the default context and let Chrome convert.
+  try {
+    context = new AudioContext()
+    await context.resume()
+    context.createMediaStreamSource(stream).disconnect()
+    return { context, stream }
+  } catch (error) {
+    await context?.close()
+    stream.getTracks().forEach((track) => track.stop())
     throw error
   }
 }
 
 function micMessage(error: unknown): string {
   const name = error instanceof DOMException ? error.name : ""
-  if (name === "NotAllowedError" || name === "SecurityError" || name === "NotFoundError") {
-    return MIC_BLOCKED
-  }
-  if (error instanceof Error && error.message === "unsupported") {
-    return MIC_BLOCKED
-  }
-  return MIC_BLOCKED
+  if (name === "NotAllowedError" || name === "SecurityError") return MIC_BLOCKED
+  if (error instanceof Error && error.message === "unsupported") return MIC_BLOCKED
+  if (name === "NotFoundError" || name === "OverconstrainedError") return MIC_MISSING
+  if (name === "NotReadableError" || name === "AbortError") return MIC_BUSY
+  return MIC_FAILED
 }
 
 function readMessage(data: unknown): Record<string, unknown> | null {
@@ -221,9 +260,11 @@ function readReply(message: Record<string, unknown>): VoiceReply {
   const text = typeof message.text === "string" ? message.text : ""
   const spoken = typeof message.spoken === "string" && message.spoken.trim() ? message.spoken : text
   const step = typeof message.step === "string" ? message.step : ""
+  const intent = typeof message.intent === "string" ? message.intent : ""
   return {
     text,
     spoken,
+    intent,
     step,
     choices: readChoices(message.choices),
     tools: readTools(message.tools),
@@ -332,6 +373,11 @@ class PcmPlayer {
     source.onended = () => {
       this.sources = this.sources.filter((item) => item !== source)
     }
+  }
+
+  /** Seconds of queued speech still to play. */
+  remaining(): number {
+    return this.sources.length === 0 ? 0 : Math.max(0, this.next - this.context.currentTime)
   }
 
   stop() {

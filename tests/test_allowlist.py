@@ -25,6 +25,8 @@ from bookly_support.agent.return_agent import receipt_download
 from bookly_support.agent.label_pdf import CARRIER_NAME
 from bookly_support.agent.returns import commit_return, return_permitted
 
+ASK_TITLE_OR_DATE = "Happy to help. Do you remember the book's title, or about when you ordered it?"
+
 TODAY = date(2026, 10, 1)
 NOW = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
 ROOT = Path(__file__).resolve().parents[1]
@@ -629,7 +631,7 @@ def test_closed_window_does_not_offer_a_refund() -> None:
     assert "start_return" not in store.calls
     assert "30-day" in turn.template
     assert "cannot go back on the card" in turn.template
-    assert "What happened with it?" in turn.template
+    assert "What is the reason for the return?" in turn.template
     assert session.phase == "exception_why"
     assert session.order_id == "BLY-11004"
     assert session.reason is None
@@ -759,7 +761,9 @@ def test_changed_my_mind_on_a_non_horror_book_does_neither() -> None:
     assert "issue_goodwill_discount" not in store.calls
     assert "Piranesi" not in turn.template
     assert "20%" not in turn.template
-    assert "I hear you: changed my mind." in turn.template
+    assert "Plans change." in turn.template
+    assert "I hear you" not in turn.template
+    assert "changed my mind" not in turn.template
     assert session.reason == "changed my mind"
     assert session.reason_kind == "other"
     assert session.sentiment == "neutral"
@@ -788,8 +792,9 @@ def test_late_apology_follows_the_reason_and_rejects_an_invented_gift() -> None:
     assert "20%" in turn.required
     assert code in turn.required
     assert "arrived late" in turn.template
-    assert "dont need it anymore" in turn.template
-    assert "delivery too late" in turn.template
+    # Their sentence is acknowledged, not repeated back to them.
+    assert "dont need it anymore" not in turn.template
+    assert "delivery too late" not in turn.template
     assert "gift" not in turn.template.lower()
     assert "birthday" not in turn.template.lower()
     assert "missed gift" not in turn.instruction.lower()
@@ -1004,7 +1009,8 @@ def test_thats_the_one_selects_bobs_single_shown_order() -> None:
     machine = Machine(listed)
     first = machine.step(session, "I want to return a product", today=TODAY, now=NOW)
     assert {choice.order_id for choice in first.choices} == {"BLY-33010", "BLY-33011"}
-    assert "Which book" in first.template
+    assert first.template == ASK_TITLE_OR_DATE
+    assert first.read_choices is False
     assert "BLY-33010" not in first.template
     assert "BLY-33011" not in first.template
     again = machine.step(session, "that's the one", today=TODAY, now=NOW)
@@ -1056,7 +1062,7 @@ def test_which_order_turn_offers_a_choice_per_order_without_reading_every_title(
         assert title not in turn.template
     for order_id in ("BLY-44121", "BLY-44120", "BLY-22044"):
         assert order_id not in turn.template
-    assert turn.template == "Which book do you want to return?"
+    assert turn.template == ASK_TITLE_OR_DATE
     invented = f"{turn.template} Circe, order BLY-99999."
     assert unsupported_facts(invented, turn.payload)
     assert accept_draft(invented, turn.template, turn.payload, turn.required) == turn.template

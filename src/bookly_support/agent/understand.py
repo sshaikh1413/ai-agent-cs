@@ -21,15 +21,17 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-from bookly_support.agent.reasons import classify_reason
+from bookly_support.agent.reasons import classify_reason, reason_topic
 from bookly_support.agent.resolve import (
     accepts_store_credit_exception,
     asks_for_parcel_label,
     asks_for_recommendation,
+    asks_for_agent,
     asks_for_return,
     asks_order_status,
     asks_own_discount,
@@ -41,10 +43,12 @@ from bookly_support.agent.resolve import (
     is_decline,
     is_password_reset,
     quoted_order_ids,
+    stated_reason,
     title_matches,
     wants_return_in_play,
     where_is_named,
 )
+from bookly_support.agent.window import ordered_window
 
 log = logging.getLogger(__name__)
 
@@ -59,12 +63,14 @@ Intent = Literal[
     "password_reset",
     "too_late",
     "goodbye",
+    "human_agent",
     "other",
 ]
 About = Literal["author", "summary", "both"]
 Destination = Literal["original_payment", "store_credit"]
 OfferReply = Literal["accept", "refuse", "unsure"]
 ReasonKind = Literal["late_delivery", "other"]
+ReasonTopic = Literal["late", "damaged", "wrong_book", "duplicate", "changed_mind", "not_for_me", "other"]
 Sentiment = Literal["negative", "neutral", "positive"]
 
 # Below this, only the intents are kept. Slots that would write or choose
@@ -75,6 +81,9 @@ MIN_CONFIDENCE = 0.6
 REASON_PHASES = frozenset({"ask_reason", "exception_why"})
 # Phases where a yes or no answers something Mara just offered.
 OFFER_PHASES = frozenset({"exception_offer", "exception_why", "which_book", "done"})
+# Phases where they are naming the book. A reason or an order date said here is kept,
+# so Mara does not ask for it again.
+START_PHASES = frozenset({"identify_order", "which_book", "done"})
 
 
 class Understanding(BaseModel):
@@ -108,6 +117,26 @@ class Understanding(BaseModel):
         default=None,
         description="Only when the message is their reason: the tone of that reason.",
     )
+    reason_topic: ReasonTopic | None = Field(
+        default=None,
+        description="Only with a reason: what it is about, so Mara can acknowledge it in her own words.",
+    )
+    order_id: str | None = Field(
+        default=None,
+        description="The one listed order they mean, by full or partial title, a description, or a misspelling.",
+    )
+    reason: str | None = Field(
+        default=None,
+        description="Only when they give a reason for the return alongside the request: their words for it.",
+    )
+    ordered_after: date | None = Field(
+        default=None,
+        description="When they say when they ordered: the first day it could have been ordered.",
+    )
+    ordered_before: date | None = Field(
+        default=None,
+        description="When they say when they ordered: the last day it could have been ordered.",
+    )
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
@@ -121,6 +150,7 @@ class TurnContext:
     articles: tuple[tuple[str, str], ...] = ()
     orders: tuple[tuple[str, str], ...] = ()
     book_in_play: str | None = None
+    today: date | None = None
 
     @property
     def article_ids(self) -> frozenset[str]:
@@ -134,6 +164,7 @@ class TurnContext:
             "policy_articles": [{"id": i, "topic": t} for i, t in self.articles],
             "orders": [{"orderId": i, "title": t} for i, t in self.orders],
             "book_in_play": self.book_in_play,
+            "today": self.today.isoformat() if self.today else None,
         }
 
 
@@ -145,7 +176,7 @@ _OFFERS = {
     "ask_reason": "Why is the book coming back?",
     "choose_destination": "Refund to the original card, or to store credit?",
     "exception_offer": "The book is past the window. Will they take a one-time store-credit refund?",
-    "exception_why": "The book is past the window. What happened with it?",
+    "exception_why": "The book is past the window. What is the reason for the return?",
     "which_book": "Which book do they mean?",
     "done": "Is there anything else?",
     "identify_order": "Which book would they like to return?",
@@ -171,13 +202,25 @@ def validate(understanding: Understanding, context: TurnContext) -> Understandin
         article_id = None
     destination = _destination_for(understanding.destination, context.phase)
     offer_reply = understanding.offer_reply if context.phase in OFFER_PHASES else None
-    reason = context.phase in REASON_PHASES
+    starting = context.phase in START_PHASES
+    stated = ((understanding.reason or "").strip() or None) if starting else None
+    reason = context.phase in REASON_PHASES or stated is not None
     reason_kind = understanding.reason_kind if reason else None
     sentiment = understanding.sentiment if reason else None
+    topic = understanding.reason_topic if reason else None
+    order_ids = {order_id for order_id, _title in context.orders}
+    order_id = understanding.order_id if understanding.order_id in order_ids else None
+    after = understanding.ordered_after if starting else None
+    before = understanding.ordered_before if starting else None
+    if after and before and after > before:
+        after = before = None
     if not confident:
         destination = None
         offer_reply = "unsure" if offer_reply is not None else None
         article_id = None
+        stated = None
+        order_id = None
+        after = before = None
     return Understanding(
         intents=intents,
         about=about,
@@ -186,6 +229,11 @@ def validate(understanding: Understanding, context: TurnContext) -> Understandin
         article_id=article_id,
         reason_kind=reason_kind,
         sentiment=sentiment,
+        reason=stated,
+        reason_topic=topic,
+        order_id=order_id,
+        ordered_after=after,
+        ordered_before=before,
         confidence=understanding.confidence,
     )
 
@@ -223,7 +271,12 @@ class RuleUnderstander:
             intents.append("goodbye")
         if _policy_cue(message):
             intents.append("policy_question")
+        if asks_for_agent(message):
+            intents.append("human_agent")
 
+        starting = context.phase in START_PHASES
+        stated = stated_reason(message) if starting else None
+        window = ordered_window(message, context.today) if starting and context.today else None
         reason = context.phase in REASON_PHASES
         return Understanding(
             intents=intents,
@@ -231,8 +284,16 @@ class RuleUnderstander:
             destination=_destination_for(destination_choice(message), context.phase),  # type: ignore[arg-type]
             offer_reply=_rule_offer_reply(message, context),
             article_id=None,
-            reason_kind=classify_reason(message) if reason else None,  # type: ignore[arg-type]
+            reason_kind=(
+                classify_reason(message) if reason else classify_reason(stated) if stated else None
+            ),  # type: ignore[arg-type]
             sentiment=None,
+            reason=stated,
+            reason_topic=(
+                reason_topic(message) if reason else reason_topic(stated) if stated else None
+            ),  # type: ignore[arg-type]
+            ordered_after=window[0] if window else None,
+            ordered_before=window[1] if window else None,
             confidence=1.0,
         )
 
@@ -288,7 +349,9 @@ Return:
   policy_question (a general shop question: shipping times, return policy, cancelling, address,
   sign-in), own_discount (the discount code on their account), password_reset (password or locked
   out), too_late (whether it is too late or past the window to return), goodbye (they are done:
-  no thanks, that's all, bye), other.
+  no thanks, that's all, bye), human_agent (they want a person: a representative, an operator,
+  a live agent, customer service, "let me talk to someone"; not a question about whether Mara is
+  a person), other.
 - about: with about_book only. author, summary, or both.
 - destination: only when step is choose_destination or exception_offer and they clearly choose or
   ask for one. original_payment for the card, Visa, debit, "card is fine", "back on my card",
@@ -308,6 +371,22 @@ Return:
   ("the spine was bent", "wrong edition"). negative when the words carry displeasure or
   disappointment, including being let down by the book ("so boring", "not what I hoped").
   positive when the words are warm.
+- reason: only when step is identify_order or which_book and the same message also says why the
+  book is coming back ("return Circe because it was boring", "the one from September, it arrived
+  damaged"). Their words for the reason, short, not reworded. Null when they give no reason. When
+  you fill reason, also fill reason_kind and sentiment for it.
+- reason_topic: whenever you fill reason_kind, what the reason is about: late (arrived late or
+  missed a date), damaged (torn, bent, broken, wet, missing pages), wrong_book (not the book or
+  edition they ordered), duplicate (they already have it, ordered twice), changed_mind (no longer
+  need it, ordered by mistake), not_for_me (did not like it, boring, not their genre or taste),
+  other.
+- order_id: when the message points at one of the listed orders, that order's id. Count a full
+  title, part of a title ("the gothic one", "Mexican"), a description of it, or a misspelling
+  ("Piranessi"). Null if it could be more than one listed order, or none.
+- ordered_after and ordered_before: only when step is identify_order or which_book and they say
+  when they ordered the book ("last month", "in September", "around the 20th", "two weeks ago").
+  Dates as YYYY-MM-DD, counted back from today in the turn. A single day gets two days either
+  side. Null when they do not say when.
 - confidence: 0 to 1, how sure you are of the whole label.
 """
 

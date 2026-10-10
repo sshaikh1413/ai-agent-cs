@@ -32,6 +32,10 @@ const GENERAL: string[] = [
 
 const RULES: Array<[RegExp, Pick]> = [
   [
+    /representative|operator|\bagent\b|real person|\bhuman\b|customer (service|support)|talk to (someone|somebody|a person)/,
+    () => ["Finding a friendly human…", "Ringing the back office…"],
+  ],
+  [
     /^faq:more:|\bfaqs?\b|frequently asked|common questions/,
     () => ["Dusting off the FAQ binder…", "Flipping to the well-thumbed pages…", "Rounding up the usual questions…"],
   ],

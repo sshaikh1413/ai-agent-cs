@@ -27,6 +27,7 @@ export type AgentIntent =
   | "policy"
   | "clarify"
   | "out_of_scope"
+  | "handoff"
 
 export type CustomerId = "cust_becky" | "cust_bob"
 
@@ -134,6 +135,7 @@ const INTENTS = new Set<AgentIntent>([
   "policy",
   "clarify",
   "out_of_scope",
+  "handoff",
 ])
 
 function apiBase(): string {

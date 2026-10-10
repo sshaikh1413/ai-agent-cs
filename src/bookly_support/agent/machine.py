@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Protocol
 
 from bookly_support.agent.allowlist import run_tool
@@ -17,16 +17,22 @@ from bookly_support.agent.articles import (
     faq_pick,
     normalize_article,
 )
-from bookly_support.agent.reasons import classify_reason
+from bookly_support.agent.reasons import classify_reason, reason_topic
 from bookly_support.agent.eligibility import is_eligible
 from bookly_support.agent.resolve import (
     asked_title,
+    agrees_to_read,
+    asks_for_agent,
+    is_decline,
     is_in_progress,
+    not_this_book,
     named_orders,
+    partial_title_matches,
     resolve_order,
     resolve_status,
+    wants_full_list,
 )
-from bookly_support.agent.window import iso_day, spoken_date
+from bookly_support.agent.window import as_utc, days_past_window, iso_day, short_date, spoken_date
 from bookly_support.agent.understand import (
     RuleUnderstander,
     TurnContext,
@@ -38,6 +44,8 @@ from bookly_support.agent.understand import (
 from bookly_support.agent.templates import (
     about_book,
     ask_anything_else,
+    ask_title_again,
+    ask_title_or_date,
     ask_reason,
     ask_what_happened,
     closed,
@@ -52,6 +60,7 @@ from bookly_support.agent.templates import (
     exception_confirm,
     exception_offer,
     faq_list,
+    handoff,
     late_apology,
     list_orders,
     missing_order,
@@ -62,8 +71,12 @@ from bookly_support.agent.templates import (
     customer_discounts,
     order_status,
     order_status_choices,
-    outside_window,
-    past_window_why,
+    could_not_find,
+    ordered_none,
+    ordered_none_offer,
+    ordered_several,
+    past_window,
+    wrong_book,
     recommend_reply,
     refund_choice,
     still_sending,
@@ -153,6 +166,12 @@ class Session:
     genre: str | None = None
     recommended_title: str | None = None
     exception: bool = False
+    # Mara already asked for the title or the order date, so the next miss lists the orders.
+    asked_which: bool = False
+    # On a call, Mara offered to read the recent orders. A yes reads them.
+    offered_list: bool = False
+    # This turn came from a voice call: the list is offered, not read unprompted. Not stored.
+    voice: bool = field(default=False, repr=False, compare=False)
     # This turn's validated label. Not stored with the session.
     understanding: Understanding | None = field(default=None, repr=False, compare=False)
 
@@ -164,6 +183,8 @@ class OrderChoice:
     order_id: str
     title: str
     mark: str
+    # When it was ordered, as Mara says it. The call reads this instead of the order id.
+    placed: str | None = None
 
 
 @dataclass
@@ -176,6 +197,9 @@ class Turn:
     step: str = "Step: which order"
     customer_reason: str | None = None
     choices: list[OrderChoice] = field(default_factory=list)
+    # False when the question already asks for the title or a date: the call does not read
+    # the list aloud yet. The chat still shows the buttons.
+    read_choices: bool = True
 
     @property
     def payload(self) -> dict:
@@ -198,14 +222,21 @@ class Machine:
         self._store = store
         self._understander = understander
 
-    def step(self, session: Session, message: str, *, today: date, now: datetime) -> Turn:
+    def step(
+        self, session: Session, message: str, *, today: date, now: datetime, voice: bool = False
+    ) -> Turn:
+        session.voice = voice
         if session.phase == "write":
             return self._write(session, today, now)
+        if asks_for_agent(message):
+            return self._handoff(session)
         if session.phase not in {"empathy", "closed"}:
             faq = self._faq_turn(session, message)
             if faq is not None:
                 return faq
-        session.understanding = self._understand(session, message)
+        session.understanding = self._understand(session, message, today)
+        if _has(session, "human_agent"):
+            return self._handoff(session)
         if _has(session, "parcel_label"):
             return self._parcel_label(session)
         kind = _about_kind(session)
@@ -232,14 +263,14 @@ class Machine:
             return self._exception_offer(session, message, today, now)
         return self._identify(session, message, today, now)
 
-    def _understand(self, session: Session, message: str) -> Understanding:
+    def _understand(self, session: Session, message: str, today: date | None = None) -> Understanding:
         """One label for this turn, checked against what this step allows."""
 
-        context = self._context(session)
+        context = self._context(session, today)
         understander = self._understander or DEFAULT_UNDERSTANDER
         return validate(understander.understand(message, context), context)
 
-    def _context(self, session: Session) -> TurnContext:
+    def _context(self, session: Session, today: date | None = None) -> TurnContext:
         reader = getattr(self._store, "policy_articles", None)
         articles = [normalize_article(article) for article in (reader() if reader else [])]
         orders = self._store.list_recent_orders(session.customer_id)
@@ -254,6 +285,7 @@ class Machine:
                 if order.get("orderId")
             ),
             book_in_play=_book_in_play(session),
+            today=today,
         )
 
     def _done(self, session: Session, message: str, now: datetime) -> Turn:
@@ -300,6 +332,8 @@ class Machine:
         session.title = None
         session.genre = None
         session.exception = False
+        session.asked_which = False
+        session.offered_list = False
         return self._identify(session, message, now.date(), now)
 
     def _parcel_label(self, session: Session) -> Turn:
@@ -457,6 +491,89 @@ class Machine:
                     "Do not invent an order. Do not say a return has started."
                 ),
             )
+        if kind == "list" and orders:
+            pointed = _pointed_order(session, orders) or partial_title_matches(message, orders)
+            if len(pointed) == 1:
+                kind, matches = "selected", pointed
+            elif pointed:
+                return self._ask_to_choose(
+                    listed,
+                    pointed,
+                    today,
+                    list_orders(pointed),
+                    (
+                        "More than one order fits what they said. Ask which one, in one short question. "
+                        "Do not read the titles or the order ids. Do not say a return has started."
+                    ),
+                )
+        if kind == "list" and orders:
+            window = _ordered_window(session)
+            if window is not None:
+                dated = _placed_between(orders, *window)
+                session.asked_which = True
+                if len(dated) == 1:
+                    kind, matches = "selected", dated
+                elif dated:
+                    return self._ask_to_choose(
+                        listed,
+                        dated,
+                        today,
+                        ordered_several(),
+                        (
+                            "More than one order was placed around the date they gave. "
+                            "Ask which one, in one short question. Do not read the titles or the order ids. "
+                            "Do not invent an order. Do not say a return has started."
+                        ),
+                    )
+                elif session.voice:
+                    return self._offer_to_read(session, listed, orders, today, ordered_none_offer())
+                else:
+                    return self._ask_to_choose(
+                        listed,
+                        orders,
+                        today,
+                        ordered_none(),
+                        (
+                            "No order was placed around the date they gave. Say so, then ask which book, "
+                            "in one short question. Do not read the titles or the order ids. "
+                            "Do not invent an order. Do not say a return has started."
+                        ),
+                    )
+            elif session.offered_list and (agrees_to_read(message) or wants_full_list(message)):
+                # They said yes to hearing the list: fall through and read it.
+                session.offered_list = False
+            elif session.offered_list and is_decline(message):
+                session.offered_list = False
+                asked = self._ask_to_choose(
+                    listed,
+                    orders,
+                    today,
+                    ask_title_again(),
+                    (
+                        "They do not want the list read. Ask, in one short question, for the title "
+                        "or about when they ordered it. Do not read the titles or the order ids."
+                    ),
+                )
+                asked.read_choices = False
+                return asked
+            elif len(orders) > 1 and not session.asked_which and not wants_full_list(message):
+                session.asked_which = True
+                asked = self._ask_to_choose(
+                    listed,
+                    orders,
+                    today,
+                    ask_title_or_date(),
+                    (
+                        "They want to return a book but did not say which. Ask, in one short question, "
+                        "whether they remember the title or about when they ordered it. "
+                        "Do not read the titles or the order ids. Do not say a return has started."
+                    ),
+                )
+                asked.read_choices = False
+                return asked
+            elif session.voice and len(orders) > 1 and not wants_full_list(message):
+                # On a call, a book Mara cannot place gets an offer, not a long list read aloud.
+                return self._offer_to_read(session, listed, orders, today, could_not_find())
         if kind != "selected":
             if not orders:
                 return Turn(
@@ -514,23 +631,9 @@ class Machine:
                     tools=[opened],
                     required=required,
                 )
-            self._remember_exception(session, detail)
-            opened.payload["window"] = "past"
-            opened.payload["storeCreditOnly"] = True
-            opened.payload["cardOffered"] = False
-            return Turn(
-                template=outside_window(opened.payload),
-                instruction=(
-                    "This book is outside the return window, so it cannot go back on the card. "
-                    "Ask what happened with it. Stay on this order. "
-                    "Do not list other orders. Do not offer store credit, the Visa, or any amount yet."
-                ),
-                tools=[opened],
-                required=[detail["title"], detail["orderId"], str(detail["returnWindowDays"])],
-                step="Step: what happened",
-            )
+            return self._past_window(session, detail, opened, [opened], today, now, card="card")
 
-        return self._ask_why(session, detail, [listed, opened])
+        return self._start_return(session, detail, [listed, opened], today, now)
 
     def _reason(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         if _has(session, "password_reset"):
@@ -538,6 +641,8 @@ class Machine:
         if session.order_id is None or not session.title:
             session.phase = "identify_order"
             return self._identify(session, message, today, now)
+        if not_this_book(message):
+            return self._wrong_book(session, today)
         session.reason = message.strip()
         session.reason_kind, session.sentiment = _reason_labels(session)
         session.phase = "empathy"
@@ -620,10 +725,13 @@ class Machine:
                 "Do not invent a book title."
             )
         else:
-            lead = empathy_other(title, session.reason or "", sentiment)
+            topic = _reason_topic(session)
+            lead = empathy_other(title, topic, sentiment)
             instruction = (
                 f"{_tone_clause(sentiment)} "
-                "Show empathy from the customer's reason and the book title. "
+                f"Their reason is about: {topic.replace('_', ' ')}. Acknowledge it warmly in your own "
+                "words, the way a bookstore clerk would, in one short sentence. Do not repeat, quote, "
+                "or paraphrase their sentence back to them, and do not say 'I hear you'. "
                 "Do not recommend a book. Do not mention a discount, a percent, or a code. "
                 "Do not invent a book title."
             )
@@ -646,6 +754,10 @@ class Machine:
             lambda: self._store.list_recent_orders(session.customer_id),
         )
         kind, chosen = resolve_status(message, orders)
+        if kind in {"several", "none"}:
+            pointed = _pointed_order(session, orders)
+            if pointed:
+                kind, chosen = "one", pointed
         if kind == "missing":
             return Turn(
                 template=missing_order(),
@@ -923,7 +1035,7 @@ class Machine:
         return Turn(
             template=ask_what_happened(shown),
             instruction=(
-                "Stay on this order. Ask what happened with it. "
+                "Stay on this order. Ask what the reason for the return is. "
                 "Do not list other books. Do not offer store credit or the card."
             ),
             tools=[
@@ -935,6 +1047,149 @@ class Machine:
             ],
             required=[detail["title"], detail["orderId"]],
             step="Step: what happened",
+        )
+
+    def _wrong_book(self, session: Session, today: date) -> Turn:
+        """They said no right after Mara named the book: drop it and ask which one."""
+
+        session.phase = "identify_order"
+        session.order_id = None
+        session.title = None
+        session.genre = None
+        session.asked_which = True
+        orders, listed = self._listed(session)
+        turn = self._ask_to_choose(
+            listed,
+            orders,
+            today,
+            wrong_book(),
+            (
+                "Mara named the wrong book. Apologize briefly and ask for the title or about when "
+                "they ordered it, in one short question. Do not read the titles or the order ids."
+            ),
+        )
+        turn.read_choices = False
+        return turn
+
+    def _offer_to_read(
+        self, session: Session, listed: ToolTrace, orders: list[dict], today: date, template: str
+    ) -> Turn:
+        """On a call: say the book was not found and offer to read the recent orders."""
+
+        session.offered_list = True
+        offer = self._ask_to_choose(
+            listed,
+            orders,
+            today,
+            template,
+            (
+                "On a phone call, the book they described was not found. Say so, then offer to read "
+                "their recent orders, in one short question. Do not read the titles or the order ids. "
+                "Do not invent an order. Do not say a return has started."
+            ),
+        )
+        offer.read_choices = False
+        return offer
+
+    def _start_return(
+        self, session: Session, detail: dict, tools: list[ToolTrace], today: date, now: datetime
+    ) -> Turn:
+        """Ask why, unless they already said why in the same sentence. Then go straight on."""
+
+        asked = self._ask_why(session, detail, tools)
+        reason = _stated_reason(session)
+        if reason is None:
+            return asked
+        session.reason = reason
+        session.reason_kind, session.sentiment = _reason_labels(session)
+        session.phase = "empathy"
+        return self._empathy_and_offer(session, today, now)
+
+    def _past_window(
+        self,
+        session: Session,
+        detail: dict,
+        opened: ToolTrace,
+        tools: list[ToolTrace],
+        today: date,
+        now: datetime,
+        *,
+        card: str,
+    ) -> Turn:
+        """Past the window: when it was ordered and delivered, how many days past the window it
+        is now, and that it cannot go back on the card. Then what happened, unless they said."""
+
+        del now
+        window = detail["returnWindowDays"]
+        shown: dict = {"title": detail["title"], "orderId": detail["orderId"], "returnWindowDays": window}
+        required = [detail["title"], detail["orderId"], str(window)]
+        delivered = detail.get("deliveredAt")
+        if isinstance(delivered, datetime):
+            shown["deliveredLabel"] = short_date(delivered, today)
+            shown["daysPastWindow"] = days_past_window(delivered, today, window)
+            opened.payload["deliveredOn"] = iso_day(delivered)
+            required.append(shown["deliveredLabel"])
+            if shown["daysPastWindow"] > 0:
+                required.append(str(shown["daysPastWindow"]))
+        elif isinstance(delivered, str):
+            opened.payload["deliveredOn"] = delivered[:10]
+        placed = detail.get("placedAt")
+        if isinstance(placed, datetime):
+            shown["placedLabel"] = short_date(placed, today)
+            required.append(shown["placedLabel"])
+        opened.payload.update({key: value for key, value in shown.items() if key not in {"title", "orderId"}})
+        opened.payload["window"] = "past"
+        opened.payload["storeCreditOnly"] = True
+        opened.payload["cardOffered"] = False
+        if card == "Visa":
+            opened.payload["cardBrand"] = "Visa"
+        self._remember_exception(session, detail)
+        facts = (
+            "Say when they ordered it and when it was delivered, how many days past the return "
+            f"window it is now, and that it cannot go back on the {card}. Copy the dates and the "
+            "numbers from the JSON. Stay on this order. Do not list other orders."
+        )
+        reason = _stated_reason(session)
+        if reason is None:
+            return Turn(
+                template=past_window(shown, card=card),
+                instruction=(
+                    f"{facts} Ask what the reason for the return is. "
+                    "Do not offer store credit, a card refund, or any amount yet."
+                ),
+                tools=tools,
+                required=required,
+                step="Step: what happened",
+            )
+        session.reason = reason
+        session.reason_kind, session.sentiment = _reason_labels(session)
+        session.phase = "exception_offer"
+        offer = self._offer_exception(session)
+        return Turn(
+            template=f"{past_window(shown, card=card, ask=False)} {offer.template}",
+            instruction=(
+                f"{facts} They already said what happened, so do not ask. "
+                "Then offer only the one-time store-credit exception for the amount in the JSON "
+                "and ask if that is acceptable. Do not offer the card, the Visa, or original payment."
+            ),
+            tools=tools + offer.tools,
+            required=required + offer.required,
+            step=offer.step,
+        )
+
+    def _handoff(self, session: Session) -> Turn:
+        """They asked for a person. The step stays, so nothing in progress is lost."""
+
+        session.understanding = None
+        return Turn(
+            template=handoff(),
+            instruction=(
+                "They asked for a person. In one short sentence, say one moment please, and that "
+                "you'll connect them with one of our agents. Do not mention orders, money, dates, "
+                "or cards. Do not promise a wait time."
+            ),
+            intent="handoff",
+            step="Step: connect to an agent",
         )
 
     def _ask_why(self, session: Session, detail: dict, tools: list[ToolTrace]) -> Turn:
@@ -1123,24 +1378,24 @@ class Machine:
         )
 
     def _too_late(self, session: Session, message: str, today: date, now: datetime) -> Turn:
-        del now
         orders, listed = self._listed(session)
         chosen = named_orders(message, orders)
         if len(chosen) == 1:
-            return self._open_window(session, chosen[0], today, listed)
+            return self._open_window(session, chosen[0], today, listed, now)
         return self._window_list(session, orders, today, listed)
 
     def _which_book(self, session: Session, message: str, today: date, now: datetime) -> Turn:
-        del now
         if _has(session, "password_reset"):
             return self._sign_in(session)
         orders, listed = self._listed(session)
         delivered = [order for order in orders if _is_delivered(order)]
-        chosen = named_orders(message, orders)
+        chosen = named_orders(message, orders) or _pointed_order(session, orders)
+        if not chosen:
+            chosen = partial_title_matches(message, orders)
         if len(chosen) == 1:
-            return self._open_window(session, chosen[0], today, listed)
+            return self._open_window(session, chosen[0], today, listed, now)
         if len(delivered) == 1 and _offer_reply(session) == "accept":
-            return self._open_window(session, delivered[0], today, listed)
+            return self._open_window(session, delivered[0], today, listed, now)
         return self._window_list(session, orders, today, listed)
 
     def _exception_why(self, session: Session, message: str, today: date, now: datetime) -> Turn:
@@ -1346,7 +1601,9 @@ class Machine:
             choices=_choice_list(marked),
         )
 
-    def _open_window(self, session: Session, selected: dict, today: date, listed: ToolTrace) -> Turn:
+    def _open_window(
+        self, session: Session, selected: dict, today: date, listed: ToolTrace, now: datetime
+    ) -> Turn:
         detail = run_tool(
             session.phase,
             "get_order",
@@ -1387,38 +1644,8 @@ class Machine:
                 step="Step: which book",
             )
         if detail["eligible"]:
-            return self._ask_why(session, detail, [listed, opened])
-        label = ""
-        delivered = detail.get("deliveredAt")
-        if isinstance(delivered, datetime):
-            label = spoken_date(delivered)
-            opened.payload["deliveredOn"] = iso_day(delivered)
-            opened.payload["deliveredLabel"] = label
-        elif isinstance(detail.get("deliveredAt"), str):
-            opened.payload["deliveredOn"] = str(detail["deliveredAt"])[:10]
-        opened.payload["window"] = "past"
-        opened.payload["cardBrand"] = "Visa"
-        opened.payload["storeCreditOnly"] = True
-        self._remember_exception(session, detail)
-        shown = {
-            "title": detail["title"],
-            "orderId": detail["orderId"],
-            "returnWindowDays": detail["returnWindowDays"],
-            "deliveredLabel": label,
-        }
-        required = [detail["title"], detail["orderId"], str(detail["returnWindowDays"])]
-        if label:
-            required.append(label)
-        return Turn(
-            template=past_window_why(shown),
-            instruction=(
-                "Say yes, this book is past the 30-day window, so it cannot go back on the Visa. "
-                "Ask what happened with it. Do not offer store credit, a card refund, or any amount yet."
-            ),
-            tools=[listed, opened],
-            required=required,
-            step="Step: what happened",
-        )
+            return self._start_return(session, detail, [listed, opened], today, now)
+        return self._past_window(session, detail, opened, [listed, opened], today, now, card="Visa")
 
 
 def _status_facts(order: dict) -> dict:
@@ -1471,6 +1698,9 @@ def _marked_order(order: dict, today: date, days: int) -> dict:
 
     public = _public_order(order)
     public["returnWindowDays"] = days
+    placed = order.get("placedAt")
+    if isinstance(placed, datetime):
+        public["placedLabel"] = short_date(placed, today)
     status = order.get("status")
     label = status.strip() if isinstance(status, str) else ""
     delivered = order.get("deliveredAt")
@@ -1525,8 +1755,14 @@ def _choice_list(orders: list[dict]) -> list[OrderChoice]:
             continue
         if not isinstance(mark, str) or not mark.strip():
             continue
+        placed = order.get("placedLabel")
         choices.append(
-            OrderChoice(order_id=order_id.strip(), title=title.strip(), mark=mark.strip())
+            OrderChoice(
+                order_id=order_id.strip(),
+                title=title.strip(),
+                mark=mark.strip(),
+                placed=placed if isinstance(placed, str) and placed else None,
+            )
         )
     return choices
 
@@ -1607,6 +1843,56 @@ def _about_kind(session: Session) -> str | None:
     if understanding is None or "about_book" not in understanding.intents:
         return None
     return understanding.about
+
+
+def _pointed_order(session: Session, orders: list[dict]) -> list[dict]:
+    """The one order Claude says they meant (by part of a title, a description, a misspelling)."""
+
+    understanding = session.understanding
+    order_id = understanding.order_id if understanding else None
+    return [order for order in orders if order.get("orderId") == order_id] if order_id else []
+
+
+def _reason_topic(session: Session) -> str:
+    """What the reason is about. Claude's label, then the keywords."""
+
+    understanding = session.understanding
+    topic = understanding.reason_topic if understanding else None
+    return topic or reason_topic(session.reason or "")
+
+
+def _stated_reason(session: Session) -> str | None:
+    """A reason they gave in the same sentence as the book, so Mara does not ask again."""
+
+    understanding = session.understanding
+    reason = understanding.reason if understanding else None
+    return reason.strip() if isinstance(reason, str) and reason.strip() else None
+
+
+def _ordered_window(session: Session) -> tuple[date, date] | None:
+    """When they said they ordered it, as a window of days, or None."""
+
+    understanding = session.understanding
+    if understanding is None:
+        return None
+    after = understanding.ordered_after or understanding.ordered_before
+    before = understanding.ordered_before or understanding.ordered_after
+    if after is None or before is None:
+        return None
+    return after, before
+
+
+def _placed_between(orders: list[dict], after: date, before: date) -> list[dict]:
+    """Orders placed inside the window. A one-day window allows a day either side."""
+
+    if (before - after).days < 2:
+        after, before = after - timedelta(days=1), before + timedelta(days=1)
+    placed = []
+    for order in orders:
+        moment = order.get("placedAt")
+        if isinstance(moment, datetime) and after <= as_utc(moment).date() <= before:
+            placed.append(order)
+    return placed
 
 
 def _destination(session: Session) -> str | None:

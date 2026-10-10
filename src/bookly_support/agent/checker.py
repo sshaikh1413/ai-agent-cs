@@ -57,6 +57,12 @@ _NAMED_DATE_DMY = re.compile(
     rf"\b(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\s+(?P<month>{_MONTH_PATTERN})\s+(?P<year>\d{{4}})\b",
     re.IGNORECASE,
 )
+# "August 10" with no year, as Mara says a date this year. It is allowed only when a
+# date in the payload has that month and day.
+_MONTH_DAY = re.compile(
+    rf"\b(?P<month>{_MONTH_PATTERN})\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\b(?!,?\s+\d{{4}})",
+    re.IGNORECASE,
+)
 # "may" is ordinary English, so a bare month word does not include it.
 # "May 4, 2026" is still parsed by the named-date pattern.
 _MONTH_WORD = re.compile(
@@ -262,6 +268,14 @@ def unsupported_facts(reply: str, payload: object) -> list[str]:
             parsed_spans.append((match.start(), match.end()))
             if found is None or found not in dates:
                 problems.append(match.group(0))
+    for match in _MONTH_DAY.finditer(reply):
+        if any(start <= match.start() < end for start, end in parsed_spans):
+            continue
+        month = _MONTHS.get(match.group("month").lower())
+        day = int(match.group("day"))
+        parsed_spans.append((match.start(), match.end()))
+        if month is None or not any(known.month == month and known.day == day for known in dates):
+            problems.append(match.group(0))
 
     for match in _MONTH_WORD.finditer(reply):
         if any(start <= match.start() and match.end() <= end for start, end in parsed_spans):
@@ -529,7 +543,12 @@ _FULFILLMENT_STATUS = (
 )
 
 # Glue in a status reply. A place or a trip sentence is not in this set.
-_STATUS_DETAIL_STOP = _PLOT_STOP | {"order", "orders", "which"}
+# Everyday words a clerk uses around a status ("I found two orders", "it's shipped").
+_STATUS_DETAIL_STOP = _PLOT_STOP | {
+    "order", "orders", "which", "it's", "that's", "here's", "there's", "found", "both", "two",
+    "one", "ones", "asking", "about", "looking", "you're", "right", "now", "currently",
+    "still", "just", "checked", "these", "those", "yours", "update", "latest",
+}
 
 
 _PAST_WINDOW = re.compile(
@@ -746,6 +765,16 @@ def recites_prior_reason(reply: str, message: str, prior: str) -> bool:
     return False
 
 
+def _without_name(text: str, customer_name: str | None) -> str:
+    """The draft with the customer's own name taken out, so greeting them is not a fact claim."""
+
+    if not isinstance(customer_name, str) or not customer_name.strip():
+        return text
+    for part in re.findall(r"[A-Za-z'’-]{2,}", customer_name):
+        text = re.sub(rf"\b{re.escape(part)}\b", "", text)
+    return text
+
+
 def accept_draft(
     draft: str | None,
     template: str,
@@ -753,11 +782,12 @@ def accept_draft(
     required: list[str],
     message: str | None = None,
     prior_reason: str | None = None,
+    customer_name: str | None = None,
 ) -> str:
     if draft is None or not draft.strip():
         return template
     text = draft.strip()
-    if not facts_allowed(text, payload):
+    if not facts_allowed(_without_name(text, customer_name), payload):
         return template
     if (
         isinstance(prior_reason, str)

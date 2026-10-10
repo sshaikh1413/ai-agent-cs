@@ -19,7 +19,7 @@ from bookly_support.agent.provider import (
     ToolTrace,
 )
 from bookly_support.agent.store import MongoStore
-from bookly_support.agent.templates import opening_line
+from bookly_support.agent.templates import dollar_signs, opening_line
 from bookly_support.agent.understand import Understander
 from bookly_support.config import ALLOWED_CUSTOMER_IDS, CUSTOMER_ID
 
@@ -83,7 +83,9 @@ class ReturnAgent:
         customer_id = _allow_customer(request.customer_id)
         session, started = self._session_for(customer_id, request.conversation_id)
         now = datetime.now(timezone.utc)
-        turn = self._machine.step(session, request.message, today=now.date(), now=now)
+        turn = self._machine.step(
+            session, request.message, today=now.date(), now=now, voice=request.channel == "voice"
+        )
         name = _customer_name(self.store.get_customer(customer_id))
         prior, memory = self._visit(customer_id)
         text = self._say(turn, request.message, name, memory)
@@ -98,9 +100,15 @@ class ReturnAgent:
             step=turn.step,
             opening=_welcome(prior, memory, name) if started else None,
             choices=[
-                OrderChoice(order_id=choice.order_id, title=choice.title, mark=choice.mark)
+                OrderChoice(
+                    order_id=choice.order_id,
+                    title=choice.title,
+                    mark=choice.mark,
+                    placed=choice.placed,
+                )
                 for choice in turn.choices
             ],
+            read_choices=turn.read_choices,
         )
 
     def _session_for(self, customer_id: str, conversation_id: str | None) -> tuple[Session, bool]:
@@ -132,14 +140,15 @@ class ReturnAgent:
         draft = self.phraser.phrase(turn, message, customer_name, memory)
         prior_reason = memory.get("reason") if isinstance(memory, dict) else None
         reason = prior_reason if isinstance(prior_reason, str) and prior_reason.strip() else None
-        return accept_draft(
+        return dollar_signs(accept_draft(
             draft,
             turn.template,
             turn.payload,
             turn.required,
             message,
             reason,
-        )
+            customer_name,
+        ))
 
 
 _RECEIPT_ID = re.compile(r"rcpt_[a-z0-9]+")
@@ -279,6 +288,8 @@ def _session(document: dict) -> Session:
         genre=document.get("genre"),
         recommended_title=document.get("recommendedTitle"),
         exception=bool(document.get("exception")),
+        asked_which=bool(document.get("askedWhich")),
+        offered_list=bool(document.get("offeredList")),
     )
 
 
@@ -298,4 +309,6 @@ def _session_doc(session: Session) -> dict:
         "genre": session.genre,
         "recommendedTitle": session.recommended_title,
         "exception": session.exception,
+        "askedWhich": session.asked_which,
+        "offeredList": session.offered_list,
     }

@@ -7,7 +7,7 @@ import numpy as np
 
 from bookly_support.agent.provider import ChatReply, ChatRequest
 from bookly_support.agent.return_agent import ReturnAgent
-from bookly_support.voice.desk import CALL_GREETING, spoken_text
+from bookly_support.voice.desk import CALL_GREETING, spoken_text, unspoken_ids
 from bookly_support.voice.turns import FRAME_SAMPLES, SPEECH_THRESHOLD, TurnDetector
 
 from test_allowlist import FakeStore, _order
@@ -95,7 +95,9 @@ def test_where_is_my_order_returns_the_stored_status() -> None:
     assert "Klara and the Sun" in reply.reply
     assert "packing" in reply.reply
     assert PACKED in reply.reply
-    assert spoken_text(reply) == reply.reply
+    assert spoken_text(reply) == unspoken_ids(reply.reply)
+    assert "BLY-44120" not in spoken_text(reply)
+    assert "Klara and the Sun" in spoken_text(reply)
     assert "Step:" not in spoken_text(reply)
     assert "list_recent_orders" not in spoken_text(reply)
 
@@ -104,7 +106,7 @@ def test_spoken_text_is_the_checker_reply() -> None:
     reply = _agent([_progress()]).reply(
         ChatRequest(message="where is my order", customer_id="cust_becky")
     )
-    assert spoken_text(reply) == reply.reply
+    assert spoken_text(reply) == unspoken_ids(reply.reply)
     payload = {
         "spoken": spoken_text(reply),
         "step": reply.step,
@@ -115,18 +117,30 @@ def test_spoken_text_is_the_checker_reply() -> None:
 
 
 def test_a_short_list_is_spoken_when_the_buttons_hold_the_titles() -> None:
-    reply = _agent(
+    agent = _agent(
         [
             _order("BLY-22018", "The Midnight Library", date(2026, 9, 24), date(2026, 9, 26), 1699),
             _order("BLY-22002", "Circe", date(2026, 9, 11), date(2026, 9, 15), 1700),
         ]
-    ).reply(ChatRequest(message="I want to return a product", customer_id="cust_becky"))
-    spoken = spoken_text(reply)
-    assert reply.reply.startswith("Which book do you want to return?")
-    assert "The Midnight Library" not in reply.reply
-    assert spoken.startswith(reply.reply)
-    assert "The Midnight Library, BLY-22018" in spoken
-    assert "Circe, BLY-22002" in spoken
+    )
+    reply = agent.reply(ChatRequest(message="I want to return a product", customer_id="cust_becky"))
+    # First Mara asks for the title or the date, and the call does not read the list yet.
+    asked = spoken_text(reply)
+    assert reply.read_choices is False
+    assert asked == reply.reply
+    assert "The Midnight Library" not in asked
+    assert "Circe" not in asked
+
+    listed = agent.reply(
+        ChatRequest(message="I don't remember", conversation_id=reply.conversation_id, customer_id="cust_becky")
+    )
+    spoken = spoken_text(listed)
+    assert listed.reply.startswith("Which book do you want to return?")
+    assert "The Midnight Library" not in listed.reply
+    assert spoken.startswith(listed.reply)
+    assert "The Midnight Library, ordered September 24" in spoken
+    assert "Circe, ordered September 11" in spoken
+    assert "BLY-" not in spoken
     assert "Step:" not in spoken
     assert "list_recent_orders" not in spoken
 
@@ -306,7 +320,8 @@ def test_socket_greeting_and_fake_transcript(monkeypatch) -> None:
 
     assert isinstance(reply, dict)
     assert reply["step"] == "Step: order status"
-    assert reply["spoken"] == reply["text"]
+    assert reply["spoken"] == unspoken_ids(reply["text"])
+    assert "BLY-" not in reply["spoken"]
     assert "packing" in reply["text"]
     assert PACKED in reply["text"]
     assert "Step:" not in reply["spoken"]
@@ -375,7 +390,7 @@ def test_barge_in_stops_playback_and_becomes_the_turn(monkeypatch) -> None:
 
     assert transcript["role"] == "user"
     assert transcript["text"] == "where is my order"
-    assert reply["spoken"] == reply["text"]
+    assert reply["spoken"] == unspoken_ids(reply["text"])
     assert "packing" in reply["spoken"]
     assert "Step:" not in reply["spoken"]
     assert CALL_GREETING in spoken

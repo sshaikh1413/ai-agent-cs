@@ -18,6 +18,7 @@ Intent = Literal[
     "policy",
     "clarify",
     "out_of_scope",
+    "handoff",
 ]
 
 
@@ -39,6 +40,8 @@ class ChatRequest(BaseModel):
     history: list[ChatTurn] = Field(default_factory=list, max_length=40)
     conversation_id: str | None = Field(default=None, max_length=80)
     customer_id: str | None = Field(default=None, max_length=40)
+    # "voice" when the turn comes from a call: Mara offers the order list instead of reading it.
+    channel: Literal["chat", "voice"] = "chat"
 
     @field_validator("message")
     @classmethod
@@ -112,6 +115,7 @@ class OrderChoice(BaseModel):
     order_id: str
     title: str
     mark: str
+    placed: str | None = None
 
 
 class ChatReply(BaseModel):
@@ -124,6 +128,8 @@ class ChatReply(BaseModel):
     step: str
     opening: str | None = None
     choices: list[OrderChoice] = Field(default_factory=list)
+    # False when the reply already asks for the title or a date: a call does not read the list.
+    read_choices: bool = True
 
 
 class DeskOrder(BaseModel):

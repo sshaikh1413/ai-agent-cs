@@ -199,6 +199,7 @@ async def handle_voice(websocket: WebSocket, agent_factory: Callable[[], object]
                     history=[],
                     conversation_id=conversation_id,
                     customer_id=customer_id,
+                    channel="voice",
                 )
                 try:
                     reply = await asyncio.to_thread(answer_transcript, agent_factory(), request)

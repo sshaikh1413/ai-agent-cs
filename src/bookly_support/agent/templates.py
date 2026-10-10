@@ -13,6 +13,54 @@ def list_orders(orders: list[dict]) -> str:
     return "Which book do you want to return?"
 
 
+def ask_title_or_date() -> str:
+    """Before listing every order: most people remember the title or roughly when."""
+
+    return "Happy to help. Do you remember the book's title, or about when you ordered it?"
+
+
+def wrong_book() -> str:
+    """Mara named a book and they said no."""
+
+    return "Sorry about that. What's the title, or about when you ordered it?"
+
+
+def ask_title_again() -> str:
+    """They did not want the list read out."""
+
+    return "Okay. What's the title, or about when you ordered it?"
+
+
+def could_not_find() -> str:
+    """On a call: the book was not placed, so offer the list instead of reading it."""
+
+    return "I couldn't find that book on your account. Would you like me to read your recent orders?"
+
+
+def ordered_none_offer() -> str:
+    """On a call: no order around that date, so offer the list instead of reading it."""
+
+    return "I don't see an order from around then. Would you like me to read your recent orders?"
+
+
+def ordered_several() -> str:
+    """More than one order was placed around the date they gave."""
+
+    return "I've got more than one order from around then. Which one is it?"
+
+
+def ordered_none() -> str:
+    """No order was placed around the date they gave. The full list follows."""
+
+    return "I don't see an order from around then. Here's what I have. Which one is it?"
+
+
+def handoff() -> str:
+    """They asked for a person."""
+
+    return "Of course. One moment, please, and I'll connect you with one of our agents."
+
+
 def week_ambiguous(orders: list[dict]) -> str:
     if not orders:
         return "Which one should I return?"
@@ -31,14 +79,29 @@ def week_none(orders: list[dict]) -> str:
     )
 
 
-def outside_window(order: dict) -> str:
-    """The delivered book is past the window. Ask what happened. The card is closed."""
+def past_window(order: dict, *, card: str, ask: bool = True) -> str:
+    """The delivered book is past the window: when it was ordered and delivered, how many
+    days past the window it is now, and that it cannot go back on the card. Money is not
+    offered here. ``ask`` adds the question about what happened."""
 
-    return (
-        f"{order['title']}, order {order['orderId']}, is outside the "
-        f"{order['returnWindowDays']}-day return window, so it cannot go back on the card. "
-        "What happened with it?"
-    )
+    ordered = order.get("placedLabel")
+    delivered = order.get("deliveredLabel")
+    title = f"{order['title']}, order {order['orderId']},"
+    if ordered and delivered:
+        lead = f"You ordered {title} on {ordered}, and it was delivered {delivered}."
+    elif delivered:
+        lead = f"{title[:-1]} was delivered {delivered}."
+    else:
+        lead = f"{title[:-1]} was delivered a while ago."
+    days = order.get("daysPastWindow")
+    window = order["returnWindowDays"]
+    if isinstance(days, int) and days > 0:
+        unit = "day" if days == 1 else "days"
+        past = f"That's {days} {unit} past our {window}-day return window"
+    else:
+        past = f"That's past our {window}-day return window"
+    text = f"{lead} {past}, so it cannot go back on the {card}."
+    return f"{text} What is the reason for the return?" if ask else text
 
 
 def ask_what_happened(order: dict) -> str:
@@ -46,7 +109,7 @@ def ask_what_happened(order: dict) -> str:
 
     return (
         f"I'll stay with {order['title']}, order {order['orderId']}. "
-        "It cannot go back on the card. What happened with it?"
+        "It cannot go back on the card. What is the reason for the return?"
     )
 
 
@@ -86,13 +149,22 @@ def empathy_horror_plain(title: str, sentiment: str | None = None) -> str:
 
 
 def late_apology(title: str, reason: str, sentiment: str | None = None) -> str:
-    """Sorry the book was late, using the customer's own words.
+    """Sorry the book was late. Their sentence is not repeated back to them.
 
-    Sentiment changes only the opening. A gift or a birthday is not added here.
-    Those words appear only when they are already in the reason.
+    Sentiment changes only the opening. A gift or a birthday is mentioned only
+    when the reason already says so.
     """
 
-    return f"{_sorry(sentiment)} {title} arrived late. {_heard(reason)}"
+    line = f"{_sorry(sentiment)} {title} arrived late."
+    birthday = re.search(r"\bbirthdays?\b", reason or "", re.IGNORECASE) is not None
+    gift = re.search(r"\bgifts?\b", reason or "", re.IGNORECASE) is not None
+    if birthday and gift:
+        line += " I know it was meant as a birthday gift, and that's a real letdown."
+    elif birthday:
+        line += " I know it was meant for a birthday, and that's a real letdown."
+    elif gift:
+        line += " I know it was meant as a gift, and that's a real letdown."
+    return line
 
 
 def empathy_late(
@@ -109,8 +181,23 @@ def empathy_late(
     )
 
 
-def empathy_other(title: str, reason: str, sentiment: str | None = None) -> str:
-    return f"{_sorry(sentiment)} {title} didn't work out. {_heard(reason)}"
+# One acknowledgement per kind of reason, in Mara's words. Their sentence is never quoted.
+_ACKNOWLEDGE = {
+    "not_for_me": "{sorry} {title} wasn't your kind of book. Not every story clicks, and that's okay.",
+    "damaged": "{sorry} {title} reached you in that shape. That's not how a book should arrive.",
+    "wrong_book": "{sorry} {title} wasn't the book you were expecting.",
+    "duplicate": "No problem at all. Two copies of {title} is one more than anyone needs.",
+    "changed_mind": "No problem at all. Plans change.",
+}
+
+
+def empathy_other(title: str, topic: str | None, sentiment: str | None = None) -> str:
+    """A short, natural acknowledgement chosen from what the reason is about."""
+
+    line = _ACKNOWLEDGE.get(topic or "")
+    if line is None:
+        return f"{_sorry(sentiment)} {title} didn't work out. Thanks for letting me know."
+    return line.format(sorry=_sorry(sentiment), title=title)
 
 
 def recommend_reply(recommendation: dict) -> str:
@@ -150,21 +237,30 @@ def about_book(book: dict, kind: str) -> str:
     return " ".join(parts) if parts else "I don't have that on file."
 
 
-def _heard(reason: str) -> str:
-    words = re.findall(r"[A-Za-z']+", reason or "")
-    text = " ".join(words).strip()
-    if not text:
-        return "I understand why you're sending it back."
-    if len(text) > 140:
-        shortened = text[:140].rsplit(" ", 1)[0]
-        text = shortened or text[:140]
-    return f"I hear you: {text}."
+def dollars(amount: object) -> str:
+    """A stored amount ("16.99") as Mara writes it: "$16.99"."""
+
+    text = str(amount).strip()
+    return text if text.startswith("$") else f"${text}"
+
+
+_BARE_AMOUNT = re.compile(r"(?<![$\d.,])(\d{1,6}(?:,\d{3})*\.\d{2})(?![\d%])")
+
+
+def dollar_signs(text: str) -> str:
+    """Every amount in a reply carries its dollar sign: "15.99" -> "$15.99".
+
+    On this desk a number with two decimals is always money, so this runs on the
+    final reply whether Claude or a template wrote it.
+    """
+
+    return _BARE_AMOUNT.sub(r"$\1", text)
 
 
 def refund_choice(options: dict) -> str:
     title = options["title"]
     order_id = options["orderId"]
-    amount = options["amount"]
+    amount = dollars(options["amount"])
     original = options["originalPayment"]
     if original.get("available") and original.get("last4"):
         return (
@@ -179,7 +275,7 @@ def refund_choice(options: dict) -> str:
 
 
 def completed(receipt: dict) -> str:
-    amount = receipt["amount"]
+    amount = dollars(receipt["amount"])
     title = receipt["title"]
     receipt_id = receipt["receiptId"]
     if receipt.get("destination") == "original_payment" and receipt.get("last4"):
@@ -331,16 +427,6 @@ def _window_line(order: dict) -> str:
     return head
 
 
-def past_window_why(order: dict) -> str:
-    """The old book cannot go back on the Visa. Money is not offered yet."""
-
-    return (
-        f"Yes. {order['title']}, order {order['orderId']}, delivered {order['deliveredLabel']}, "
-        f"is past the {order['returnWindowDays']} days, so it cannot go back on the Visa. "
-        "What happened with it?"
-    )
-
-
 def still_sending(order: dict) -> str:
     """Not delivered. Repeat the stored trip status. Do not call it past the window."""
 
@@ -355,7 +441,7 @@ def exception_offer(options: dict) -> str:
     """One offer: store credit for the refundable amount. The card is not offered."""
 
     return (
-        f"I can make a one-time store credit exception for {options['amount']} "
+        f"I can make a one-time store credit exception for {dollars(options['amount'])} "
         f"on {options['title']}, order {options['orderId']}. Is that acceptable?"
     )
 
@@ -366,7 +452,7 @@ def exception_card(options: dict) -> str:
     return (
         f"I'm sorry, {options['title']} is past the {options['returnWindowDays']} days, "
         "so it can't go back on your card. What I can do is a one-time store credit "
-        f"for {options['amount']}. Would you like that?"
+        f"for {dollars(options['amount'])}. Would you like that?"
     )
 
 
@@ -375,14 +461,14 @@ def exception_confirm(options: dict) -> str:
 
     return (
         "I just want to confirm — you're good with the one-time store credit "
-        f"for {options['amount']} on {options['title']}, order {options['orderId']}, correct?"
+        f"for {dollars(options['amount'])} on {options['title']}, order {options['orderId']}, correct?"
     )
 
 
 def exception_completed(receipt: dict) -> str:
     return (
         f"Your return is complete. Receipt {receipt['receiptId']} for {receipt['title']} "
-        f"is {receipt['amount']} in store credit. "
+        f"is {dollars(receipt['amount'])} in store credit. "
         "The receipt and the parcel label are ready to download. "
         "Anything else I can help with?"
     )

@@ -28,11 +28,15 @@ export function CallPanel({
   const [micError, setMicError] = useState<string | null>(null)
   const [deskError, setDeskError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // null until the microphone delivers its first sound buffer.
+  const [level, setLevel] = useState<number | null>(null)
   const session = useRef<VoiceSession | null>(null)
   // The last button pressed, so its echoed order id shows as the title.
   const chosen = useRef<{ orderId: string; title: string } | null>(null)
   // The working line for the turn in progress, picked from what the reader said or clicked.
   const working = useRef(STATUS.thinking)
+  // They asked for a person. Mara says so, then the call ends.
+  const handingOff = useRef(false)
   const scroller = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -57,6 +61,7 @@ export function CallPanel({
       },
       onReply(reply: VoiceReply) {
         setBusy(false)
+        handingOff.current = reply.intent === "handoff"
         setLines((current) => [
           ...current,
           {
@@ -75,6 +80,15 @@ export function CallPanel({
         setStatus(state === "thinking" ? working.current : (STATUS[state] ?? "On the call."))
         if (state === "thinking") setBusy(true)
         if (state === "listening" || state === "speaking") setBusy(false)
+      },
+      onSpoken() {
+        if (!handingOff.current) return
+        session.current?.stop()
+        setBusy(false)
+        setStatus("Mara has passed you to one of our agents. You can close this panel.")
+      },
+      onLevel(value) {
+        setLevel(value)
       },
       onError(message) {
         setDeskError(message)
@@ -123,7 +137,25 @@ export function CallPanel({
           <p className="mt-3 text-sm text-destructive" role="alert">
             {micError}
           </p>
-        ) : null}
+        ) : (
+          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Mic</span>
+            <span
+              className="h-1.5 w-24 overflow-hidden rounded-full bg-secondary"
+              role="meter"
+              aria-label="Microphone level"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round((level ?? 0) * 100)}
+            >
+              <span
+                className="block h-full rounded-full bg-primary transition-[width] duration-100"
+                style={{ width: `${Math.round((level ?? 0) * 100)}%` }}
+              />
+            </span>
+            <span>{level === null ? "waiting for the microphone…" : level > 0.02 ? "hearing you" : "quiet"}</span>
+          </div>
+        )}
         {deskError ? (
           <p className="mt-3 text-sm text-destructive" role="alert">
             {deskError}

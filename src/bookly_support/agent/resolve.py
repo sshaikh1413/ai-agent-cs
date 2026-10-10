@@ -491,3 +491,122 @@ def resolve_order(text: str, orders: list[dict], today: date) -> tuple[str, list
     if len(orders) == 1 and confirms_shown_order(text):
         return "selected", orders
     return "list", orders
+
+
+# A person, not Mara: "representative", "operator", "a real person", "customer service".
+_AGENT_ASK = re.compile(
+    r"\b(?:representative|rep|operator|human|real person|live (?:person|agent)|"
+    r"(?:an?|your|the|real|live|human) agent|agent please|customer (?:service|support)|"
+    r"(?:talk|speak|chat) (?:to|with) (?:a|an|some|somebody|someone|a real)\s*(?:one|body|person)?|"
+    r"(?:talk|speak) to (?:a |your )?(?:manager|supervisor)|transfer me|connect me)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_agent(text: str) -> bool:
+    """They want a person: a representative, an operator, an agent, customer service.
+
+    "Are you a human?" is a question about Mara, not a request to be transferred.
+    """
+
+    if re.search(r"\bare you\b", text, re.IGNORECASE):
+        return False
+    if re.fullmatch(r"\s*(?:an? )?(?:agent|person|someone)(?: please)?[.!?]*\s*", text, re.IGNORECASE):
+        return True
+    return _AGENT_ASK.search(text) is not None
+
+
+# "... because it was boring", "..., it arrived damaged". The words after the cue are the reason.
+_REASON_CUE = re.compile(
+    r"(?:\bbecause\b|\bsince\b|\bcause\b|\bas\b(?= it\b)|,\s*(?=(?:it|the book|the cover|the pages?)\b))\s*(.+)$",
+    re.IGNORECASE,
+)
+
+
+def stated_reason(text: str) -> str | None:
+    """A reason given in the same sentence as the return, or None.
+
+    Closed cues only ("because", "since", ", it ..."). Claude labels other
+    wording in ``understand``.
+    """
+
+    found = _REASON_CUE.search(text.strip())
+    if not found:
+        return None
+    reason = found.group(1).strip(" .!?")
+    return reason if len(reason.split()) >= 2 else None
+
+
+_FULL_LIST = re.compile(
+    r"\b(?:don'?t (?:know|remember|recall)|not sure|no idea|can'?t remember|forgot|"
+    r"list (?:them|my|all)|show (?:me|them|my)|what (?:do i have|are my|did i order)|"
+    r"read (?:them|me)|all of them|which ones)\b",
+    re.IGNORECASE,
+)
+
+
+def wants_full_list(text: str) -> bool:
+    """They do not have the title or the date, or they ask to hear the list."""
+
+    return _FULL_LIST.search(text) is not None
+
+
+# Words too common to point at one title on their own.
+_TITLE_STOP = frozenset(
+    "the a an and of in on for to with from about book books novel story one ones night day "
+    "time home life love world light dark house return order ordered something kind sort "
+    "that this those these what which where when other another".split()
+)
+
+
+def _title_words(title: str) -> set[str]:
+    return {word for word in re.findall(r"[a-z]+", title.lower()) if len(word) >= 4 and word not in _TITLE_STOP}
+
+
+def partial_title_matches(text: str, orders: list[dict]) -> list[dict]:
+    """Orders whose title shares a distinctive word with the message, or a near spelling.
+
+    "something gothic" finds Mexican Gothic, "the midnight one" finds The Midnight
+    Library, and "Piranessi" finds Piranesi. Claude picks the order first in
+    ``understand``; this is the fallback when it does not.
+    """
+
+    from difflib import SequenceMatcher
+
+    said = [word for word in re.findall(r"[a-z]+", _clean(text)) if len(word) >= 4 and word not in _TITLE_STOP]
+    found: list[dict] = []
+    for order in orders:
+        words = _title_words(str(order.get("title") or ""))
+        if any(
+            heard == word or (len(heard) >= 5 and SequenceMatcher(None, heard, word).ratio() >= 0.85)
+            for heard in said
+            for word in words
+        ):
+            found.append(order)
+    return found
+
+
+_AGREE = re.compile(
+    r"^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|please do|yes please|sounds good|"
+    r"that would help|that'?d help|do it|read (?:them|it|me)|go for it)\b",
+    re.IGNORECASE,
+)
+
+
+def agrees_to_read(text: str) -> bool:
+    """Yes to "Would you like me to read your recent orders?"."""
+
+    return _AGREE.search(_clean(text)) is not None
+
+
+_NOT_THIS_BOOK = re.compile(
+    r"^(?:no|nope|nah|not that one|not that book|not the right (?:one|book)|wrong (?:one|book)|"
+    r"that(?:'?s| is) not (?:it|the one|the right one|right|my book)|(?:a )?different (?:one|book))\b[.!]*$",
+    re.IGNORECASE,
+)
+
+
+def not_this_book(text: str) -> bool:
+    """Right after Mara names the book, "no" or "wrong one" means she has the wrong book."""
+
+    return _NOT_THIS_BOOK.fullmatch(_clean(text).strip()) is not None

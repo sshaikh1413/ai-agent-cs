@@ -53,6 +53,10 @@ GOLDEN: dict[str, dict] = {
     "can i cancel my order?": {"intents": ["policy_question"], "article_id": "cancel"},
     "can i change my shipping address?": {"intents": ["policy_question"], "article_id": "address-change"},
     "shipping and tax": {"intents": ["policy_question"], "article_id": None},
+    # They want a person, not Mara.
+    "can i speak to a representative": {"intents": ["human_agent"]},
+    "let me talk to a real person": {"intents": ["human_agent"]},
+    "i need customer service": {"intents": ["human_agent"]},
     # The reason they typed: kind and tone.
     "this book was awful and i hated every page.": {"reason_kind": "other", "sentiment": "negative"},
     "i loved this wonderful book and it made me so happy!": {"reason_kind": "other", "sentiment": "positive"},
