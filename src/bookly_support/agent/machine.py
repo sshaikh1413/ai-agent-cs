@@ -41,6 +41,7 @@ from bookly_support.agent.templates import (
     empathy_late,
     empathy_other,
     delivered_window_list,
+    exception_card,
     exception_completed,
     exception_confirm,
     exception_offer,
@@ -1101,6 +1102,9 @@ class Machine:
         return self._offer_exception(session)
 
     def _exception_offer(self, session: Session, message: str, today: date, now: datetime) -> Turn:
+        # Asking for the card comes first: "yes, on my Visa" is not a yes to store credit.
+        if _destination(session) == "original_payment":
+            return self._exception_turn(session, confirm=False, card_asked=True)
         if _offer_reply(session) == "accept":
             session.destination = "store_credit"
             session.exception = True
@@ -1116,7 +1120,7 @@ class Machine:
     def _confirm_exception(self, session: Session) -> Turn:
         return self._exception_turn(session, confirm=True)
 
-    def _exception_turn(self, session: Session, *, confirm: bool) -> Turn:
+    def _exception_turn(self, session: Session, *, confirm: bool, card_asked: bool = False) -> Turn:
         if session.order_id is None:
             raise RuntimeError("an exception offer requires an order")
         options = run_tool(
@@ -1143,6 +1147,27 @@ class Machine:
             "storeCreditOnly": True,
             "cardOffered": False,
         }
+        if card_asked:
+            payload["returnWindowDays"] = self._store.return_window_days()
+            return Turn(
+                template=exception_card(payload),
+                instruction=(
+                    "They asked for the refund on their card instead. Say kindly that this book is "
+                    "past the return window in the JSON, so it can't go back on the card, and that "
+                    "the one-time store credit is what you can do. Ask if they'd like it. Copy the "
+                    "amount, the title, and the day count from the JSON. Do not repeat the earlier "
+                    "offer word for word. Do not name the Visa or say a return is complete."
+                ),
+                tools=[
+                    ToolTrace(
+                        name="get_refund_options",
+                        summary=f"Card not available for {payload['orderId']}; store credit only.",
+                        payload=payload,
+                    )
+                ],
+                required=[payload["title"], payload["amount"], "store credit"],
+                step="Step: store credit exception",
+            )
         if confirm:
             return Turn(
                 template=exception_confirm(payload),
@@ -1523,6 +1548,11 @@ def _about_kind(session: Session) -> str | None:
     if understanding is None or "about_book" not in understanding.intents:
         return None
     return understanding.about
+
+
+def _destination(session: Session) -> str | None:
+    understanding = session.understanding
+    return understanding.destination if understanding else None
 
 
 def _offer_reply(session: Session) -> str | None:

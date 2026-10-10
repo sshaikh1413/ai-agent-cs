@@ -352,6 +352,16 @@ def exception_offer(options: dict) -> str:
     )
 
 
+def exception_card(options: dict) -> str:
+    """They asked for the card. Say why not, then the one offer again in new words."""
+
+    return (
+        f"I'm sorry, {options['title']} is past the {options['returnWindowDays']} days, "
+        "so it can't go back on your card. What I can do is a one-time store credit "
+        f"for {options['amount']}. Would you like that?"
+    )
+
+
 def exception_confirm(options: dict) -> str:
     """A shrug is not a yes. Ask once, and stay on the amount and the order."""
 

@@ -694,3 +694,27 @@ def test_done_phase_return_lists_books_without_a_completed_return() -> None:
     assert closed.choices == []
     assert len(store.repo.returns) == 1
     assert next(iter(store.repo.returns.values()))["orderId"] == "BLY-18440"
+
+
+def test_asking_for_the_visa_on_the_exception_says_why_and_offers_credit_again() -> None:
+    store, machine, session = _offered_piranesi()
+    for phrase in ("can i get it on my visa instead?", "yes, put it on my Visa"):
+        card = machine.step(session, phrase, today=TODAY, now=NOW)
+        assert session.phase == "exception_offer", phrase
+        assert session.destination is None, phrase
+        assert "start_return" not in store.calls, phrase
+        assert card.step == "Step: store credit exception", phrase
+        assert "past the 30 days" in card.template, phrase
+        assert "can't go back on your card" in card.template, phrase
+        assert "store credit for 15.99" in card.template, phrase
+        assert "Is that acceptable?" not in card.template, phrase
+        assert "Visa" not in card.template, phrase
+        assert unsupported_facts(card.template, card.payload) == [], phrase
+        assert accept_draft(card.template, card.template, card.payload, card.required) == card.template
+        refund = "Sure, I'll put 15.99 back on your card for Piranesi."
+        assert accept_draft(refund, card.template, card.payload, card.required) == card.template
+
+    done = machine.step(session, "yes", today=TODAY, now=NOW)
+    assert store.calls.count("start_return") == 1
+    assert done.tools[0].payload["destination"] == "store_credit"
+    assert done.tools[0].payload["exception"] is True

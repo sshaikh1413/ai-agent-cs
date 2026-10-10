@@ -32,6 +32,9 @@ def test_a_destination_counts_only_while_mara_is_asking_for_one() -> None:
     assert validate(label, TurnContext(phase="choose_destination")).destination == "store_credit"
     assert validate(label, TurnContext(phase="identify_order")).destination is None
     assert validate(label, TurnContext(phase="exception_offer")).destination is None
+    card = Understanding(intents=[], destination="original_payment")
+    assert validate(card, TurnContext(phase="exception_offer")).destination == "original_payment"
+    assert validate(card, TurnContext(phase="done", exception_open=True)).destination is None
 
 
 def test_low_confidence_drops_anything_that_would_write() -> None:

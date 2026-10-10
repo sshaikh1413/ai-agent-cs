@@ -27,6 +27,7 @@ GOLDEN: dict[str, dict] = {
     "visa is fine": ORIGINAL,
     "the card works": ORIGINAL,
     "put it back on the card": ORIGINAL,
+    "can i get it on my visa instead?": ORIGINAL,
     "store credit is fine": STORE,
     "credit on my account": STORE,
     "blue": NOTHING,

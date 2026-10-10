@@ -169,7 +169,7 @@ def validate(understanding: Understanding, context: TurnContext) -> Understandin
     article_id = understanding.article_id
     if "policy_question" not in intents or article_id not in context.article_ids:
         article_id = None
-    destination = understanding.destination if context.phase == "choose_destination" else None
+    destination = _destination_for(understanding.destination, context.phase)
     offer_reply = understanding.offer_reply if context.phase in OFFER_PHASES else None
     reason = context.phase in REASON_PHASES
     reason_kind = understanding.reason_kind if reason else None
@@ -228,13 +228,24 @@ class RuleUnderstander:
         return Understanding(
             intents=intents,
             about=kind,  # type: ignore[arg-type]
-            destination=destination_choice(message) if context.phase == "choose_destination" else None,  # type: ignore[arg-type]
+            destination=_destination_for(destination_choice(message), context.phase),  # type: ignore[arg-type]
             offer_reply=_rule_offer_reply(message, context),
             article_id=None,
             reason_kind=classify_reason(message) if reason else None,  # type: ignore[arg-type]
             sentiment=None,
             confidence=1.0,
         )
+
+
+def _destination_for(destination: str | None, phase: str) -> str | None:
+    """A destination counts while Mara asks for one. On the store-credit exception,
+    only a request for the card is kept, so the machine can say why it is not offered."""
+
+    if phase == "choose_destination":
+        return destination
+    if phase == "exception_offer" and destination == "original_payment":
+        return destination
+    return None
 
 
 def _policy_cue(message: str) -> bool:
@@ -279,9 +290,10 @@ Return:
   out), too_late (whether it is too late or past the window to return), goodbye (they are done:
   no thanks, that's all, bye), other.
 - about: with about_book only. author, summary, or both.
-- destination: only when step is choose_destination and they clearly choose. original_payment for
-  the card, Visa, debit, "card is fine", "back on my card". store_credit for store credit, shop
-  credit, account credit. Null if they name both, refuse, or are unclear.
+- destination: only when step is choose_destination or exception_offer and they clearly choose or
+  ask for one. original_payment for the card, Visa, debit, "card is fine", "back on my card",
+  "can I get it on my Visa instead?". store_credit for store credit, shop credit, account credit.
+  Null if they name both, refuse, or are unclear.
 - offer_reply: their answer to mara_just_asked. accept for a clear yes ("yeah that'd be great",
   "I'll take it", "sure", "that's the one" when one book was shown). refuse for a clear no
   ("no thanks", "never mind"). unsure for a shrug ("why not", "I guess", "whatever"). On the
