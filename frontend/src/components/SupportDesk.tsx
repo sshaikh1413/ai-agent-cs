@@ -14,6 +14,7 @@ import {
   type ReceiptDownload,
   type ToolTrace,
 } from "../agent/provider.ts"
+import { workingLine } from "../agent/working.ts"
 import { speak, speechOutputSupported, stopSpeaking } from "../speech/playback.ts"
 import { CallPanel } from "./CallPanel.tsx"
 import { Composer } from "./Composer.tsx"
@@ -35,7 +36,7 @@ type ThreadItem =
       choices?: OrderChoice[]
     }
   | { id: string; kind: "error"; text: string; retryMessage: string }
-  | { id: string; kind: "pending" }
+  | { id: string; kind: "pending"; text: string }
 
 type DeskState =
   | { status: "loading" }
@@ -243,7 +244,7 @@ export function SupportDesk() {
     setItems([
       ...prior,
       { id: crypto.randomUUID(), kind: "user", text: message, shown: shown?.trim() || undefined },
-      { id: pendingId, kind: "pending" },
+      { id: pendingId, kind: "pending", text: workingLine(message, shown) },
     ])
     void run(prior, message, pendingId)
   }
@@ -252,7 +253,7 @@ export function SupportDesk() {
     if (locked) return
     const pendingId = crypto.randomUUID()
     const prior = items.filter((item) => item.id !== errorId)
-    setItems([...prior, { id: pendingId, kind: "pending" }])
+    setItems([...prior, { id: pendingId, kind: "pending", text: workingLine(message) }])
     void run(prior, message, pendingId)
   }
 
@@ -414,7 +415,7 @@ export function SupportDesk() {
                         onChoose={send}
                       />
                     ) : null}
-                    {item.kind === "pending" ? <PendingBubble /> : null}
+                    {item.kind === "pending" ? <PendingBubble text={item.text} /> : null}
                     {item.kind === "error" ? (
                       <ErrorBubble text={item.text} onRetry={() => retry(item.id, item.retryMessage)} />
                     ) : null}
@@ -717,11 +718,11 @@ function AssistantBubble({
   )
 }
 
-function PendingBubble() {
+function PendingBubble({ text }: { text: string }) {
   return (
     <p className="text-sm text-muted-foreground" role="status">
       <span className="mr-2 inline-block size-2 animate-pulse rounded-full bg-primary align-middle motion-reduce:animate-none" />
-      Checking the order book…
+      {text}
     </p>
   )
 }

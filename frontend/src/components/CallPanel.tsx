@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { Download, PhoneOff } from "lucide-react"
 import { Button } from "@/components/ui/button.tsx"
 import type { CustomerId, OrderChoice, ParcelLabel, ReceiptDownload, ToolTrace } from "../agent/provider.ts"
+import { workingLine } from "../agent/working.ts"
 import { startVoiceCall, type VoiceReply, type VoiceSession } from "../speech/call.ts"
 
 type CallLine =
@@ -30,6 +31,8 @@ export function CallPanel({
   const session = useRef<VoiceSession | null>(null)
   // The last button pressed, so its echoed order id shows as the title.
   const chosen = useRef<{ orderId: string; title: string } | null>(null)
+  // The working line for the turn in progress, picked from what the reader said or clicked.
+  const working = useRef(STATUS.thinking)
   const scroller = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -47,7 +50,9 @@ export function CallPanel({
         setBusy(true)
         const pick = chosen.current
         chosen.current = null
-        const shown = pick && text === pick.orderId ? pick.title : text
+        const title = pick && text === pick.orderId ? pick.title : undefined
+        const shown = title ?? text
+        working.current = workingLine(text, title)
         setLines((current) => [...current, { id: crypto.randomUUID(), role: "user", text: shown }])
       },
       onReply(reply: VoiceReply) {
@@ -67,7 +72,7 @@ export function CallPanel({
         ])
       },
       onStatus(state) {
-        setStatus(STATUS[state] ?? "On the call.")
+        setStatus(state === "thinking" ? working.current : (STATUS[state] ?? "On the call."))
         if (state === "thinking") setBusy(true)
         if (state === "listening" || state === "speaking") setBusy(false)
       },
