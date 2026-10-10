@@ -192,3 +192,27 @@ def test_a_draft_without_dollar_signs_gets_them() -> None:
     )
     assert "$17.00" in offer.reply
     assert " 17.00" not in offer.reply.replace("$17.00", "")
+
+
+def test_a_horror_reply_follows_what_they_said_about_the_scares() -> None:
+    _store, machine, session = _desk()
+    machine.step(session, "I want to return Mexican Gothic", today=TODAY, now=NOW)
+    turn = machine.step(session, "it was way too scary", today=TODAY, now=NOW)
+    assert "Mexican Gothic was too scary for you. Horror isn't for everyone." in turn.template
+    from bookly_support.agent.templates import empathy_horror
+
+    assert empathy_horror("Mexican Gothic", {"title": "Beach Read"}, "negative", "too_scary") == (
+        "I'm really sorry Mexican Gothic was too scary for you. Horror isn't for everyone. "
+        "If you'd like something gentler, try Beach Read."
+    )
+    assert "not scary" not in turn.template
+    assert "matching what they said" in turn.instruction
+
+    _store, machine, session = _desk()
+    machine.step(session, "I want to return Mexican Gothic", today=TODAY, now=NOW)
+    turn = machine.step(session, "it wasn't scary at all", today=TODAY, now=NOW)
+    assert "Mexican Gothic wasn't scary enough." in turn.template
+    assert "too scary" not in turn.template
+
+    assert reason_topic("I don't like horror") == "not_for_me"
+    assert reason_topic("gave me nightmares") == "too_scary"

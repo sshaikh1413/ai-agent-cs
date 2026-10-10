@@ -27,13 +27,18 @@ _TOPICS = (
     ("wrong_book", re.compile(r"\b(?:wrong (?:book|title|edition|one|item)|not what i ordered|different (?:book|edition)|sent me the wrong)\b", re.IGNORECASE)),
     ("duplicate", re.compile(r"\b(?:already (?:have|own|had|read)|duplicate|ordered (?:it )?twice|two copies|got (?:it )?twice|bought it twice)\b", re.IGNORECASE)),
     ("changed_mind", re.compile(r"\b(?:changed my mind|don'?t need|no longer need|not needed|by mistake|accident(?:ally)?|ordered (?:it )?by accident)\b", re.IGNORECASE)),
-    ("not_for_me", re.compile(r"\b(?:boring|bored|didn'?t (?:like|love|enjoy|get into)|did not (?:like|enjoy)|not (?:for me|my (?:thing|style|taste|genre|type))|genre|hated?|dull|slow|couldn'?t get into|not (?:good|great|interesting)|disappointing|disappointed|meh|too (?:long|slow|dark|sad))\b", re.IGNORECASE)),
+    # "Not scary" before "too scary": "it wasn't scary at all" names the word scary too.
+    ("not_scary", re.compile(r"\b(?:not|wasn'?t|isn'?t|never|barely|hardly)\s+(?:very |that |at all |even |remotely )?(?:scary|frightening|creepy|spooky|chilling)|\bnot scary enough|\bdidn'?t (?:scare|frighten|creep) me|\bboring for (?:a )?horror", re.IGNORECASE)),
+    ("too_scary", re.compile(r"\b(?:too|so|very|really|way too|super)\s+(?:scary|frightening|creepy|disturbing|gory|graphic|intense|spooky)|\bscared me|\bnightmares?\b|\bfreaked me out|\bcouldn'?t sleep", re.IGNORECASE)),
+    ("not_for_me", re.compile(r"\b(?:(?:don'?t|dont|do not|not a fan of|not into|hate)\s+(?:\w+\s+)?horror|boring|bored|didn'?t (?:like|love|enjoy|get into)|did not (?:like|enjoy)|not (?:for me|my (?:thing|style|taste|genre|type))|genre|hated?|dull|slow|couldn'?t get into|not (?:good|great|interesting)|disappointing|disappointed|meh|too (?:long|slow|dark|sad))\b", re.IGNORECASE)),
 )
-REASON_TOPICS = ("late", "damaged", "wrong_book", "duplicate", "changed_mind", "not_for_me", "other")
+REASON_TOPICS = (
+    "late", "damaged", "wrong_book", "duplicate", "changed_mind", "not_scary", "too_scary", "not_for_me", "other",
+)
 
 
 def reason_topic(text: str) -> str:
-    """late, damaged, wrong_book, duplicate, changed_mind, not_for_me, or other."""
+    """One of ``REASON_TOPICS``."""
 
     for topic, pattern in _TOPICS:
         if pattern.search(text or ""):

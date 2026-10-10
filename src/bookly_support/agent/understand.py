@@ -70,7 +70,9 @@ About = Literal["author", "summary", "both"]
 Destination = Literal["original_payment", "store_credit"]
 OfferReply = Literal["accept", "refuse", "unsure"]
 ReasonKind = Literal["late_delivery", "other"]
-ReasonTopic = Literal["late", "damaged", "wrong_book", "duplicate", "changed_mind", "not_for_me", "other"]
+ReasonTopic = Literal[
+    "late", "damaged", "wrong_book", "duplicate", "changed_mind", "not_scary", "too_scary", "not_for_me", "other"
+]
 Sentiment = Literal["negative", "neutral", "positive"]
 
 # Below this, only the intents are kept. Slots that would write or choose
@@ -378,8 +380,9 @@ Return:
 - reason_topic: whenever you fill reason_kind, what the reason is about: late (arrived late or
   missed a date), damaged (torn, bent, broken, wet, missing pages), wrong_book (not the book or
   edition they ordered), duplicate (they already have it, ordered twice), changed_mind (no longer
-  need it, ordered by mistake), not_for_me (did not like it, boring, not their genre or taste),
-  other.
+  need it, ordered by mistake), not_scary (a scary book that was not scary enough), too_scary
+  (too scary, too intense, gave them nightmares), not_for_me (did not like it, boring, not their
+  genre or taste), other. Read typos for what they mean ("too scwary" is too_scary).
 - order_id: when the message points at one of the listed orders, that order's id. Count a full
   title, part of a title ("the gothic one", "Mexican"), a description of it, or a misspelling
   ("Piranessi"). Null if it could be more than one listed order, or none.

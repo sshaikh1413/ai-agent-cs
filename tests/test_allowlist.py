@@ -681,7 +681,7 @@ def test_horror_path_recommends_a_book_and_skips_the_discount() -> None:
     assert expected is not None
     assert expected["genre"].casefold() != "horror"
     assert turn.tools[0].payload["title"] == expected["title"]
-    assert "not scary" in turn.template
+    assert "wasn't scary enough" in turn.template
     assert expected["title"] in turn.template
     stocked = next(book for book in _CATALOG if book["title"] == expected["title"])
     assert stocked["summary"] not in turn.template

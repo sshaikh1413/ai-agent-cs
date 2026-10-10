@@ -712,14 +712,17 @@ class Machine:
                 )
             )
             _remember_recommendation(session, recommendation)
+            topic = _reason_topic(session)
             if recommendation.get("title"):
-                lead = empathy_horror(title, recommendation, sentiment)
+                lead = empathy_horror(title, recommendation, sentiment, topic)
                 extra_required = [str(recommendation["title"])]
             else:
-                lead = empathy_horror_plain(title, sentiment)
+                lead = empathy_horror_plain(title, sentiment, topic)
             instruction = (
                 f"{_tone_clause(sentiment)} "
-                "Apologize that it was not a good read and not scary. "
+                f"Their reason is about: {topic.replace('_', ' ')}. Acknowledge it in your own words, "
+                "matching what they said: if it was too scary, say so; if it was not scary enough, say "
+                "that. Do not claim the opposite of their reason, and do not quote their sentence. "
                 "Recommend only the title in the JSON. "
                 "Do not mention a discount, a percent, or a code. "
                 "Do not invent a book title."

@@ -134,18 +134,31 @@ def _sorry(sentiment: str | None) -> str:
     return "I'm sorry"
 
 
-def empathy_horror(title: str, recommendation: dict, sentiment: str | None = None) -> str:
-    return (
-        f"{_sorry(sentiment)} {title} was not a good read and was not scary. "
-        f"If you'd like something else, try {recommendation['title']}."
-    )
+# A horror book's line follows what they said: too scary, not scary enough, or anything else.
+_HORROR = {
+    "too_scary": "{sorry} {title} was too scary for you. Horror isn't for everyone.",
+    "not_scary": "{sorry} {title} wasn't scary enough.",
+}
 
 
-def empathy_horror_plain(title: str, sentiment: str | None = None) -> str:
-    return (
-        f"{_sorry(sentiment)} {title} was not a good read and was not scary. "
-        "I don't have another title on the shelf to suggest."
-    )
+def _horror_line(title: str, topic: str | None, sentiment: str | None) -> str:
+    line = _HORROR.get(topic or "")
+    if line is not None:
+        return line.format(sorry=_sorry(sentiment), title=title)
+    return empathy_other(title, topic, sentiment)
+
+
+def empathy_horror(
+    title: str, recommendation: dict, sentiment: str | None = None, topic: str | None = None
+) -> str:
+    """The acknowledgement for their reason, then one non-horror title."""
+
+    other = "something gentler" if topic == "too_scary" else "something else"
+    return f"{_horror_line(title, topic, sentiment)} If you'd like {other}, try {recommendation['title']}."
+
+
+def empathy_horror_plain(title: str, sentiment: str | None = None, topic: str | None = None) -> str:
+    return f"{_horror_line(title, topic, sentiment)} I don't have another title on the shelf to suggest."
 
 
 def late_apology(title: str, reason: str, sentiment: str | None = None) -> str:
