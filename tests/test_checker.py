@@ -1,0 +1,220 @@
+from bookly_support.agent.checker import accept_draft, facts_allowed, unsupported_facts
+from bookly_support.agent.templates import completed, refund_choice
+
+OPTIONS = {
+    "results": [
+        {
+            "orderId": "BLY-22018",
+            "title": "The Midnight Library",
+            "refundableCents": 1699,
+            "amount": "16.99",
+            "originalPayment": {"available": True, "brand": "Visa", "last4": "4242"},
+            "storeCredit": {"available": True, "refundableCents": 1699, "amount": "16.99"},
+        }
+    ]
+}
+
+RECEIPT = {
+    "results": [
+        {
+            "status": "completed",
+            "receiptId": "rcpt_abc123",
+            "orderId": "BLY-22018",
+            "title": "The Midnight Library",
+            "amountCents": 1699,
+            "amount": "16.99",
+            "destination": "original_payment",
+            "brand": "Visa",
+            "last4": "4242",
+        }
+    ]
+}
+
+
+def test_card_tail_amount_and_ids_must_be_in_the_payload() -> None:
+    assert facts_allowed("Visa ending 4242 for 16.99 on BLY-22018.", OPTIONS)
+    assert "9999" in unsupported_facts("The card ends in 9999.", OPTIONS)
+    assert "$18.00" in "".join(unsupported_facts("The refund is $18.00.", OPTIONS))
+    assert any("BLY-99999" in item for item in unsupported_facts("Order BLY-99999.", OPTIONS))
+    assert any("rcpt_deadbeef" in item for item in unsupported_facts("Receipt rcpt_deadbeef.", OPTIONS))
+
+
+def test_dates_must_match_the_payload() -> None:
+    payload = {"results": [{"placedAt": "2026-09-24T06:16:31Z", "orderId": "BLY-22018"}]}
+    assert facts_allowed("Placed on September 24, 2026.", payload)
+    assert unsupported_facts("Placed on September 1, 2026.", payload)
+
+
+def test_completion_claim_requires_a_completed_receipt() -> None:
+    assert unsupported_facts("Your return is complete.", OPTIONS)
+    assert facts_allowed(
+        "Your return is complete. Receipt rcpt_abc123 for The Midnight Library is 16.99 back to the Visa ending 4242.",
+        RECEIPT,
+    )
+
+
+def test_ordinary_may_is_not_a_date() -> None:
+    assert facts_allowed("I may help with a return.", {"results": []})
+
+
+def test_stray_percent_is_replaced_by_the_template() -> None:
+    payload = {
+        "results": [
+            {
+                "code": "BLY20-ABC12345",
+                "percent": 20,
+                "percentLabel": "20%",
+                "orderId": "BLY-33010",
+                "title": "A Gentleman in Moscow",
+            }
+        ]
+    }
+    template = (
+        "I'm sorry A Gentleman in Moscow arrived late and the gift was missed. "
+        "I can offer 20% off your next purchase with code BLY20-ABC12345."
+    )
+    draft = "Sorry the gift was late. Take 30% off, along with 20% off, code BLY20-ABC12345."
+    assert facts_allowed(template, payload)
+    assert "30%" in "".join(unsupported_facts(draft, payload))
+    assert accept_draft(draft, template, payload, ["20%", "BLY20-ABC12345"]) == template
+
+
+def test_gift_is_rejected_when_the_reason_does_not_say_it() -> None:
+    reason = "dont need it anymore. delivery too late"
+    payload = {
+        "reason": reason,
+        "results": [
+            {
+                "code": "BLY20-ABC12345",
+                "percent": 20,
+                "percentLabel": "20%",
+                "orderId": "BLY-33010",
+                "title": "A Gentleman in Moscow",
+            }
+        ],
+    }
+    template = (
+        "I'm sorry A Gentleman in Moscow arrived late. "
+        "I hear you: dont need it anymore delivery too late. "
+        "I can offer 20% off your next purchase with code BLY20-ABC12345."
+    )
+    draft = (
+        "I'm sorry the gift was missed. "
+        "I can offer 20% off your next purchase with code BLY20-ABC12345."
+    )
+    assert "gift" not in template.lower()
+    assert facts_allowed(template, payload)
+    assert any("gift" in item.lower() for item in unsupported_facts(draft, payload))
+    assert accept_draft(draft, template, payload, ["20%", "BLY20-ABC12345"]) == template
+
+    birthday = {
+        **payload,
+        "reason": "It was a birthday gift and it arrived late",
+    }
+    gift_draft = (
+        "I'm sorry the birthday gift was missed. "
+        "I can offer 20% off your next purchase with code BLY20-ABC12345."
+    )
+    assert facts_allowed(gift_draft, birthday)
+    assert accept_draft(gift_draft, template, birthday, ["20%", "BLY20-ABC12345"]) == gift_draft
+    stray = gift_draft.replace("20%", "30%", 1)
+    assert "30%" in "".join(unsupported_facts(stray, birthday))
+    assert accept_draft(stray, template, birthday, ["20%", "BLY20-ABC12345"]) == template
+
+
+def test_title_missing_from_the_payload_is_replaced() -> None:
+    payload = {"results": [{"title": "Piranesi", "genre": "fantasy"}]}
+    template = "I'm sorry Mexican Gothic was not a good read and was not scary. If you'd like something else, try Piranesi."
+    assert "Mexican Gothic" in "".join(unsupported_facts(template, payload))
+    grounded = {
+        "results": [
+            {"title": "Piranesi", "genre": "fantasy"},
+            {"title": "Mexican Gothic", "orderId": "BLY-22044"},
+        ]
+    }
+    assert facts_allowed(template, grounded)
+    draft = (
+        "I'm sorry Mexican Gothic was not a good read and was not scary. "
+        "Try The Silent Woods instead of Piranesi."
+    )
+    assert accept_draft(draft, template, grounded, ["Piranesi"]) == template
+
+
+def test_invented_amount_or_receipt_id_is_rejected() -> None:
+    template = completed(RECEIPT["results"][0])
+    draft = (
+        "Your return is complete. Receipt rcpt_invented for The Midnight Library "
+        "is $20.00 back to the Visa ending 4242."
+    )
+    problems = unsupported_facts(draft, RECEIPT)
+    assert any("rcpt_invented" in item for item in problems)
+    assert any("20.00" in item for item in problems)
+    assert accept_draft(draft, template, RECEIPT, ["rcpt_abc123", "16.99", "4242"]) == template
+
+
+def test_a_different_author_or_plot_is_replaced_by_the_template() -> None:
+    payload = {
+        "results": [
+            {
+                "title": "Piranesi",
+                "author": "Susanna Clarke",
+                "summary": "A man records the tides in a house of statues.",
+            }
+        ]
+    }
+    template = "Piranesi is by Susanna Clarke."
+    assert facts_allowed(template, payload)
+    assert facts_allowed(payload["results"][0]["summary"], payload)
+    wrong_author = "Piranesi is by madeline miller."
+    assert any("madeline miller" in item.lower() for item in unsupported_facts(wrong_author, payload))
+    assert accept_draft(wrong_author, template, payload, []) == template
+    wrong_plot = (
+        "Piranesi is by Susanna Clarke. "
+        "It is about a witch who turns sailors into pigs."
+    )
+    assert any("witch" in item.lower() for item in unsupported_facts(wrong_plot, payload))
+    assert accept_draft(wrong_plot, template, payload, ["Susanna Clarke"]) == template
+
+
+def test_day_count_dollar_and_code_must_be_in_the_payload() -> None:
+    payload = {
+        "body": (
+            "Standard shipping takes 5–7 business days. "
+            "It is free at $35 and over, and otherwise it is $5.99."
+        ),
+        "standardShippingCents": 599,
+        "freeAtCents": 3500,
+    }
+    assert facts_allowed(payload["body"], payload)
+    assert any("3" in item for item in unsupported_facts("It takes 3 business days.", payload))
+    assert any("4.99" in item for item in unsupported_facts("It costs $4.99.", payload))
+    assert any("FREESHIP" in item for item in unsupported_facts("Use code FREESHIP.", payload))
+    window = {"returnWindowDays": 30, "mark": "Delivered and past the 30-day window"}
+    assert facts_allowed("Delivered and past the 30-day window.", window)
+    assert any("14" in item for item in unsupported_facts("Delivered and past the 14-day window.", window))
+
+
+def test_a_sent_code_or_an_account_claim_is_rejected() -> None:
+    payload = {
+        "body": (
+            "Bookly emails a one-time code for sign-in. "
+            "This desk does not send that code, does not ask you to type a password, "
+            "and does not say if an email address is on file."
+        )
+    }
+    assert facts_allowed(payload["body"], payload)
+    bad = "We emailed you a code at becky@example.com and that email has an account."
+    problems = " ".join(unsupported_facts(bad, payload)).lower()
+    assert "emailed you" in problems
+    assert "becky@example.com" in problems
+    assert "has an account" in problems
+    assert accept_draft(bad, payload["body"], payload, ["does not send that code"]) == payload["body"]
+
+
+def test_templates_are_grounded() -> None:
+    offer = refund_choice(OPTIONS["results"][0])
+    done = completed(RECEIPT["results"][0])
+    assert facts_allowed(offer, OPTIONS)
+    assert facts_allowed(done, RECEIPT)
+    assert accept_draft("I invented order BLY-00001.", offer, OPTIONS, ["The Midnight Library", "16.99", "4242"]) == offer
+    assert "rcpt_abc123" in accept_draft("done", done, RECEIPT, ["rcpt_abc123", "16.99", "4242"])

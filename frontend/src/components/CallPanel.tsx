@@ -1,0 +1,248 @@
+import { useEffect, useRef, useState } from "react"
+import { Download, PhoneOff } from "lucide-react"
+import { Button } from "@/components/ui/button.tsx"
+import type { CustomerId, OrderChoice, ParcelLabel, ReceiptDownload, ToolTrace } from "../agent/provider.ts"
+import { workingLine } from "../agent/working.ts"
+import { startVoiceCall, type VoiceReply, type VoiceSession } from "../speech/call.ts"
+
+type CallLine =
+  | { id: string; role: "mara"; text: string; step?: string; choices?: OrderChoice[]; tools?: ToolTrace[]; receipt?: ReceiptDownload; label?: ParcelLabel }
+  | { id: string; role: "user"; text: string }
+
+const STATUS: Record<string, string> = {
+  starting: "Getting Mara's voice ready…",
+  speaking: "Mara is talking. Speak to interrupt.",
+  listening: "Listening.",
+  thinking: "Checking the order book…",
+}
+
+export function CallPanel({
+  customerId,
+  onClose,
+}: {
+  customerId: CustomerId
+  onClose: () => void
+}) {
+  const [lines, setLines] = useState<CallLine[]>([])
+  const [status, setStatus] = useState("Connecting the call…")
+  const [micError, setMicError] = useState<string | null>(null)
+  const [deskError, setDeskError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  // null until the microphone delivers its first sound buffer.
+  const [level, setLevel] = useState<number | null>(null)
+  const session = useRef<VoiceSession | null>(null)
+  // The last button pressed, so its echoed order id shows as the title.
+  const chosen = useRef<{ orderId: string; title: string } | null>(null)
+  // The working line for the turn in progress, picked from what the reader said or clicked.
+  const working = useRef(STATUS.thinking)
+  // They asked for a person. Mara says so, then the call ends.
+  const handingOff = useRef(false)
+  const scroller = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    let call: VoiceSession | null = null
+    const timer = window.setTimeout(() => {
+      call = startVoiceCall(customerId, {
+      onGreeting(text) {
+        setLines((current) =>
+          current.some((line) => line.role === "mara" && line.text === text)
+            ? current
+            : [...current, { id: "greeting", role: "mara", text }],
+        )
+      },
+      onUser(text) {
+        setBusy(true)
+        const pick = chosen.current
+        chosen.current = null
+        const title = pick && text === pick.orderId ? pick.title : undefined
+        const shown = title ?? text
+        working.current = workingLine(text, title)
+        setLines((current) => [...current, { id: crypto.randomUUID(), role: "user", text: shown }])
+      },
+      onReply(reply: VoiceReply) {
+        setBusy(false)
+        handingOff.current = reply.intent === "handoff"
+        setLines((current) => [
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            role: "mara",
+            text: reply.spoken || reply.text,
+            step: reply.step,
+            choices: reply.choices,
+            tools: reply.tools,
+            receipt: reply.receipt,
+            label: reply.label,
+          },
+        ])
+      },
+      onStatus(state) {
+        setStatus(state === "thinking" ? working.current : (STATUS[state] ?? "On the call."))
+        if (state === "thinking") setBusy(true)
+        if (state === "listening" || state === "speaking") setBusy(false)
+      },
+      onSpoken() {
+        if (!handingOff.current) return
+        session.current?.stop()
+        setBusy(false)
+        setStatus("Mara has passed you to one of our agents. You can close this panel.")
+      },
+      onLevel(value) {
+        setLevel(value)
+      },
+      onError(message) {
+        setDeskError(message)
+        setBusy(false)
+      },
+      onMicError(message) {
+        setMicError(message)
+      },
+    })
+    session.current = call
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      call?.stop()
+      session.current = null
+    }
+  }, [customerId])
+
+  useEffect(() => {
+    const node = scroller.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+  }, [lines, micError, deskError])
+
+  function choose(orderId: string, title: string) {
+    chosen.current = { orderId, title }
+    session.current?.sendText(orderId)
+  }
+
+  return (
+    <section id="mara-call" aria-label="Call with Mara" className="shrink-0 border-b border-border bg-card">
+      <div className="mx-auto flex max-h-80 w-full max-w-3xl flex-col px-4 py-3 sm:max-h-96">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="font-serif text-xl leading-none">Call with Mara</h2>
+            <p className="mt-1 text-sm text-muted-foreground" role="status">
+              {status}
+            </p>
+          </div>
+          <Button type="button" variant="outline" className="h-11 shrink-0" onClick={onClose}>
+            <PhoneOff />
+            End call
+          </Button>
+        </div>
+        {micError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {micError}
+          </p>
+        ) : (
+          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Mic</span>
+            <span
+              className="h-1.5 w-24 overflow-hidden rounded-full bg-secondary"
+              role="meter"
+              aria-label="Microphone level"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round((level ?? 0) * 100)}
+            >
+              <span
+                className="block h-full rounded-full bg-primary transition-[width] duration-100"
+                style={{ width: `${Math.round((level ?? 0) * 100)}%` }}
+              />
+            </span>
+            <span>{level === null ? "waiting for the microphone…" : level > 0.02 ? "hearing you" : "quiet"}</span>
+          </div>
+        )}
+        {deskError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {deskError}
+          </p>
+        ) : null}
+        <div ref={scroller} className="mt-3 min-h-24 flex-1 space-y-3 overflow-y-auto" role="log" aria-live="polite">
+          {lines.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Connecting the call…</p>
+          ) : (
+            lines.map((line) =>
+              line.role === "user" ? (
+                <p key={line.id} className="ml-8 rounded-2xl rounded-br-md bg-primary px-3 py-2 text-primary-foreground">
+                  {line.text}
+                </p>
+              ) : (
+                <article key={line.id} className="mr-8 rounded-2xl rounded-bl-md border border-border bg-background px-3 py-2">
+                  <p className="font-serif text-sm">Mara</p>
+                  {line.tools && line.tools.length > 0 ? (
+                    <ul className="mt-2 space-y-1">
+                      {line.tools.map((tool) => (
+                        <li key={`${tool.name}-${tool.summary}`} className="rounded-md bg-secondary px-2 py-1 text-sm">
+                          <span className="font-semibold">Used {tool.name}</span>
+                          <span className="mt-0.5 block text-muted-foreground">{tool.summary}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <p className="mt-1 whitespace-pre-wrap">{line.text}</p>
+                  {line.choices && line.choices.length > 0 ? (
+                    <ul className="mt-2 grid gap-2" aria-label="Choose an order">
+                      {line.choices.map((choice) => (
+                        <li key={choice.order_id}>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={busy}
+                            className="h-auto min-h-11 w-full items-start justify-start whitespace-normal px-3 py-2 text-left"
+                            onClick={() => choose(choice.order_id, choice.title)}
+                          >
+                            <span className="min-w-0">
+                              <span className="block font-semibold break-words">{choice.title}</span>
+                              <span className="block text-xs font-normal break-words text-muted-foreground">
+                                {/^BLY-\d+$/i.test(choice.order_id)
+                                  ? `${choice.order_id} · ${choice.mark}`
+                                  : choice.mark}
+                              </span>
+                            </span>
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {line.step ? (
+                    <p className="mt-2 border-t border-border pt-2 text-sm text-muted-foreground">{line.step}</p>
+                  ) : null}
+                  {line.receipt || line.label ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {line.receipt ? (
+                        <a
+                          href={line.receipt.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+                        >
+                          <Download aria-hidden="true" />
+                          Open return receipt
+                        </a>
+                      ) : null}
+                      {line.label ? (
+                        <a
+                          href={line.label.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+                        >
+                          <Download aria-hidden="true" />
+                          Open parcel label
+                        </a>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </article>
+              ),
+            )
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}

@@ -1,0 +1,8 @@
+{
+  "name": "bookly",
+  "private": true,
+  "description": "Private install entry for the Bookly return desk. Python dependencies stay in pyproject.toml. Frontend dependencies stay in frontend/package.json. This package is not published.",
+  "scripts": {
+    "postinstall": "if [ -n \"$BOOKLY_ROOT_INSTALL\" ]; then exit 0; fi; uv sync && BOOKLY_ROOT_INSTALL=1 npm install --prefix frontend"
+  }
+}

@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+.DS_Store
+frontend/node_modules/
+frontend/dist/
+*.local
+.env
+agent-tools/
+# Voice weights download on first call. Do not commit them.
+*.onnx
+*.onnx.json
