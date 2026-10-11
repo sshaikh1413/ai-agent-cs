@@ -1,4 +1,8 @@
-# Bookly Support Desk
+<p align="center">
+  <img src="frontend/public/favicon.svg" alt="Bookly logo" width="96" height="96">
+</p>
+
+<h1 align="center">Bookly Support Desk</h1>
 
 An AI customer-support desk for an online bookstore, by chat or by voice. **Mara**, the assistant, handles book returns from start to finish, answers order-status and policy questions, and hands off to a person when asked.
 
