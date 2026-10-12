@@ -49,15 +49,35 @@ def test_other_is_not_an_intent_the_machine_sees() -> None:
     assert label.intents == ["order_status"]
 
 
+def _wire(**fields) -> dict:
+    """A full Claude answer: every field present, "none" / "" / 0 where it does not apply."""
+
+    answer = {
+        "intents": [], "about": "none", "destination": "none", "offer_reply": "none", "article_id": "",
+        "reason_kind": "none", "sentiment": "none", "reason_topic": "none", "order_id": "", "reason": "",
+        "match_price": 0, "match_store": "", "ordered_after": "", "ordered_before": "", "confidence": 1.0,
+    }
+    answer.update(fields)
+    return answer
+
+
+def test_the_wire_schema_has_no_optional_or_nullable_fields() -> None:
+    from bookly_support.agent.understand import UnderstandingWire
+
+    schema = UnderstandingWire.model_json_schema()
+    assert set(schema["required"]) == set(schema["properties"])
+    assert not any("anyOf" in field or "format" in field for field in schema["properties"].values())
+    label = UnderstandingWire(**_wire(match_price=12.99, match_store="Target", ordered_after="2026-09-01")).to_understanding()
+    assert label.match_price == 12.99 and label.match_store == "Target"
+    assert label.ordered_after is not None and label.ordered_before is None
+    assert label.about is None and label.order_id is None and label.reason is None
+
+
 def test_claude_output_is_parsed_into_the_schema() -> None:
     # Native structured output: Claude answers with JSON text, not a tool call.
     model = TestModel(
         custom_output_text=json.dumps(
-            {
-                "intents": ["policy_question"],
-                "article_id": "cancel",
-                "confidence": 0.9,
-            }
+            _wire(intents=["policy_question"], article_id="cancel", confidence=0.9)
         ),
         profile=ModelProfile(supports_json_schema_output=True),
     )

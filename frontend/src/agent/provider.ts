@@ -49,6 +49,8 @@ export type ToolName =
   | "get_policy_article"
   | "list_customer_discounts"
   | "issue_parcel_label"
+  | "check_competitor_price"
+  | "issue_price_match"
 
 export interface ToolTrace {
   name: ToolName
@@ -125,6 +127,8 @@ const TOOLS = new Set<ToolName>([
   "get_policy_article",
   "list_customer_discounts",
   "issue_parcel_label",
+  "check_competitor_price",
+  "issue_price_match",
 ])
 
 const INTENTS = new Set<AgentIntent>([

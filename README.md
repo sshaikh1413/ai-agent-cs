@@ -14,6 +14,8 @@ The design rule: **Claude understands and phrases; code decides.** Claude reads 
 
 - **Returns, end to end.** Finds the book from a title, part of a title ("something gothic"), a description ("the witch book about Greek myths"), a misspelling, or roughly when it was ordered ("last month"). Asks why, responds with empathy, and offers a refund to the card on file or store credit. Then writes the return, with a downloadable receipt and a shipping label.
 - **Past the 30-day window.** Says when the book was ordered and delivered and how many days past the window it is, then offers a one-time store-credit exception. The card is never offered for these.
+- **Price match.** When a reader found the book cheaper elsewhere, Mara offers a price match before a return: the reader keeps the book and gets the difference refunded. She asks for the price and the store, checks that store (a simulated lookup; no other store is contacted), and refunds the difference. A price that isn't lower is declined, and "no thanks" goes to the usual refund question.
+- **Books still on the way.** Says the book hasn't arrived yet and starts the return anyway. The reader sends it back with the shipping label once it arrives, and the refund is issued when Bookly receives it.
 - **Order status.** Reads the stored status of an order ("where is my order", "where's the circus book").
 - **Store questions and FAQ.** Answers from Bookly's own policy articles. Typing **FAQ** lists the most-asked questions as buttons, with a *Show more questions* button for the rest.
 - **Books.** Gives the author and a one-line summary from the catalog, and recommends a book the reader doesn't already own (never horror after a horror return).
@@ -41,7 +43,7 @@ flowchart LR
 
 Each turn goes through four layers:
 
-1. **Understand** ([`agent/understand.py`](src/bookly_support/agent/understand.py)). One Claude call labels the message with a fixed schema: intents such as `return_item`, `order_status` or `human_agent`, plus details such as the order they mean, when they ordered, their reason and its tone, a refund choice, or a yes or no to an offer. Rule-based matching is the fallback if the call fails.
+1. **Understand** ([`agent/understand.py`](src/bookly_support/agent/understand.py)). One Claude call labels the message with a fixed schema (every field required, so the structured-output grammar stays small): intents such as `return_item`, `order_status` or `human_agent`, plus details such as the order they mean, when they ordered, their reason and its tone, a refund choice, or a yes or no to an offer. Rule-based matching is the fallback if the call fails.
 2. **Validate and decide** ([`agent/machine.py`](src/bookly_support/agent/machine.py)). The label is checked against the current step and dropped when confidence is low. The state machine then chooses one tool. A tool [allowlist](src/bookly_support/agent/allowlist.py) limits which tools each step may run. Claude never chooses tools, writes records, or picks the customer.
 3. **Phrase** ([`agent/phrasing.py`](src/bookly_support/agent/phrasing.py)). Claude rewrites a template reply in Mara's voice: warm, brief, like a bookstore clerk. It sees only the tool results for this turn.
 4. **Check** ([`agent/checker.py`](src/bookly_support/agent/checker.py)). The draft is rejected, and the template used instead, if it states an order id, amount, date, title, author, status, discount code or carrier that the tools didn't return.
@@ -57,6 +59,7 @@ Each turn goes through four layers:
 | `issue_goodwill_discount` | A 20% code, only after a late delivery |
 | `recommend_book`, `lookup_catalog` | Recommendations, author and summary |
 | `get_policy_article`, `list_customer_discounts` | Store policy answers and the reader's own codes |
+| `check_competitor_price`, `issue_price_match` | A simulated price check at another store, then one price-match refund per order |
 
 Every tool is scoped to the signed-in customer.
 
@@ -178,13 +181,15 @@ The desk is signed in as one of two demo readers. Switch with the buttons in the
 Things to try:
 
 - `I want to return a book` → `the gothic one` → `it was too scary` → `store credit`
+- `I want to return Circe` → `I found it cheaper somewhere else` → `yes` → `$12.99 at Barnes & Noble`
 - `I want to return Piranesi because the pages were torn` → `can I get it on my Visa instead?`
+- `it had something to do with a circus` (a book still on the way) → `I changed my mind` → `back on my card`
 - `Where is my order?` or `where's the circus book`
 - `FAQ`
 - `What's The Midnight Library about?`
 - `Can I speak to a representative?`
 
-**Reset demo** clears conversations and removes completed returns, receipts, labels and discount codes, so every book can be returned again. Customers, orders, the catalog and remembered reasons are kept.
+**Reset demo** clears conversations and removes completed returns, receipts, labels, price matches and discount codes, so every book can be returned again. Customers, orders, the catalog and remembered reasons are kept.
 
 ---
 

@@ -101,6 +101,8 @@ def receipt_rows(
     label = _REASON_LABELS.get(return_doc.get("reasonKind"))
     if isinstance(return_doc.get("reasonKind"), str) and label:
         rows.append(("Reason label", label))
+    if return_doc.get("awaitingDelivery"):
+        destination = f"{destination}, once we receive the book"
     rows.extend(
         [
             ("Refund", destination),

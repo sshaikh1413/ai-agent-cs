@@ -218,9 +218,11 @@ def test_a_status_question_does_not_start_a_return() -> None:
         today=TODAY,
         now=NOW,
     )
-    assert blocked.step == "Step: which order"
-    assert "has not been delivered" in blocked.template
+    # A book still on its way: say so, then start the return and ask why. Nothing is written yet.
+    assert blocked.step == "Step: why it's coming back"
+    assert "hasn't been delivered yet" in blocked.template
     assert "packing" in blocked.template
+    assert "send it back once it arrives" in blocked.template
     assert "past the" not in blocked.template
     assert "30-day" not in blocked.template
     assert "get_refund_options" not in [tool.name for tool in blocked.tools]

@@ -224,3 +224,44 @@ def test_no_right_after_the_book_is_named_means_the_wrong_book() -> None:
     machine.step(session, "Circe", today=TODAY, now=NOW, voice=True)
     assert session.order_id == "BLY-22002"
     assert "start_return" not in store.calls
+
+
+def test_a_book_on_its_way_can_be_returned_and_is_refunded_on_receipt() -> None:
+    from bookly_support.agent.return_agent import label_download, receipt_download
+
+    store, machine, session = _desk()
+    first = machine.step(session, "it had something to do with a circus", today=TODAY, now=NOW)
+    assert session.order_id == "BLY-44121"
+    assert session.phase == "ask_reason"
+    assert first.template == (
+        "The Night Circus, order BLY-44121, hasn't been delivered yet. It's shipped. "
+        "I can still start your return now, and you can send it back once it arrives. "
+        "What made you want to send it back?"
+    )
+    assert unsupported_facts(first.template, first.payload) == []
+
+    offer = machine.step(session, "I changed my mind", today=TODAY, now=NOW)
+    assert "Once it's back with us, I can refund" in offer.template
+    assert "start_return" not in store.calls
+
+    done = machine.step(session, "back on my card", today=TODAY, now=NOW)
+    assert store.calls.count("start_return") == 1
+    payload = done.tools[0].payload
+    assert payload["status"] == "completed"
+    assert payload["awaitingDelivery"] is True
+    assert payload["destination"] == "original_payment"
+    assert "Once the book arrives, send it back with the shipping label" in done.template
+    assert "when we receive it" in done.template
+    assert done.step == "Step: receipt and label"
+    assert receipt_download(done, "cust_becky") is not None
+    assert label_download(done, "cust_becky") is not None
+
+
+def test_a_reason_with_a_book_on_its_way_goes_to_the_refund_question() -> None:
+    _store, machine, session = _desk()
+    turn = machine.step(session, "I want to return Klara and the Sun because I already have it", today=TODAY, now=NOW)
+    assert session.order_id == "BLY-44120"
+    assert session.reason == "I already have it"
+    assert turn.template.startswith("Klara and the Sun, order BLY-44120, hasn't been delivered yet. It's packing.")
+    assert "Once it's back with us, I can refund" in turn.template
+    assert "What made you want to send it back?" not in turn.template

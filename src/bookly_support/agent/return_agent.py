@@ -180,7 +180,9 @@ def label_download(turn: Turn, customer_id: str) -> ParcelLabel | None:
     for tool in turn.tools:
         payload = tool.payload
         if tool.name == "start_return":
-            if payload.get("status") != "completed" or not payload.get("exception"):
+            if payload.get("status") != "completed" or not (
+                payload.get("exception") or payload.get("awaitingDelivery")
+            ):
                 continue
         elif tool.name == "issue_parcel_label":
             if payload.get("status") != "ready":
@@ -290,6 +292,8 @@ def _session(document: dict) -> Session:
         exception=bool(document.get("exception")),
         asked_which=bool(document.get("askedWhich")),
         offered_list=bool(document.get("offeredList")),
+        match_price_cents=document.get("matchPriceCents"),
+        match_store=document.get("matchStore"),
     )
 
 
@@ -311,4 +315,6 @@ def _session_doc(session: Session) -> dict:
         "exception": session.exception,
         "askedWhich": session.asked_which,
         "offeredList": session.offered_list,
+        "matchPriceCents": session.match_price_cents,
+        "matchStore": session.match_store,
     }

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Protocol
@@ -44,12 +46,16 @@ from bookly_support.agent.understand import (
 from bookly_support.agent.templates import (
     about_book,
     ask_anything_else,
+    ask_match_details,
+    ask_match_price,
+    ask_match_store,
     ask_title_again,
     ask_title_or_date,
     ask_reason,
     ask_what_happened,
     closed,
     completed,
+    completed_in_transit,
     empathy_horror,
     empathy_horror_plain,
     empathy_late,
@@ -61,6 +67,8 @@ from bookly_support.agent.templates import (
     exception_offer,
     faq_list,
     handoff,
+    in_transit_why,
+    in_transit_lead,
     late_apology,
     list_orders,
     missing_order,
@@ -76,6 +84,10 @@ from bookly_support.agent.templates import (
     ordered_none_offer,
     ordered_several,
     past_window,
+    price_match_offer,
+    price_match_reask,
+    price_matched,
+    price_not_lower,
     wrong_book,
     recommend_reply,
     refund_choice,
@@ -170,6 +182,9 @@ class Session:
     asked_which: bool = False
     # On a call, Mara offered to read the recent orders. A yes reads them.
     offered_list: bool = False
+    # A lower price found elsewhere, gathered over the price-match turns.
+    match_price_cents: int | None = None
+    match_store: str | None = None
     # This turn came from a voice call: the list is offered, not read unprompted. Not stored.
     voice: bool = field(default=False, repr=False, compare=False)
     # This turn's validated label. Not stored with the session.
@@ -261,6 +276,10 @@ class Machine:
             return self._exception_why(session, message, today, now)
         if session.phase == "exception_offer":
             return self._exception_offer(session, message, today, now)
+        if session.phase == "price_match_offer":
+            return self._price_match_offer(session, message, today, now)
+        if session.phase == "price_match_details":
+            return self._price_match_details(session, message, today, now)
         return self._identify(session, message, today, now)
 
     def _understand(self, session: Session, message: str, today: date | None = None) -> Understanding:
@@ -334,6 +353,8 @@ class Machine:
         session.exception = False
         session.asked_which = False
         session.offered_list = False
+        session.match_price_cents = None
+        session.match_store = None
         return self._identify(session, message, now.date(), now)
 
     def _parcel_label(self, session: Session) -> Turn:
@@ -616,6 +637,8 @@ class Machine:
             },
         )
         if not detail["eligible"]:
+            if not _is_delivered(detail) and is_in_progress(detail):
+                return self._start_in_transit(session, detail, opened, [opened], today, now)
             if not _is_delivered(detail):
                 status = detail.get("status")
                 required = [detail["title"], detail["orderId"]]
@@ -659,6 +682,8 @@ class Machine:
         instruction = ""
         extra_required: list[str] = []
         late = session.reason_kind == "late_delivery"
+        if not late and _reason_topic(session) == "cheaper_elsewhere":
+            return self._offer_price_match(session)
         if late:
             discount = run_tool(
                 "empathy",
@@ -930,11 +955,16 @@ class Machine:
         original = options.get("originalPayment") or {}
         if original.get("available") and original.get("last4"):
             required.append(str(original["last4"]))
+        later = (
+            " The book has not arrived yet, so say the refund happens once it is back with us."
+            if options.get("awaitingDelivery")
+            else ""
+        )
         return Turn(
             template=refund_choice(options),
             instruction=(
                 "Offer the refund destinations in the JSON. Ask them to choose original payment "
-                "or store credit. Do not say the return is complete or that it has started."
+                f"or store credit. Do not say the return is complete or that it has started.{later}"
             ),
             tools=[*prior, offered],
             required=required,
@@ -975,6 +1005,23 @@ class Machine:
             )
         session.phase = "done"
         session.return_id = result.get("returnId")
+        if result.get("awaitingDelivery"):
+            required = [result["receiptId"], result["title"], result["amount"]]
+            if result.get("last4"):
+                required.append(str(result["last4"]))
+            return Turn(
+                template=completed_in_transit(result),
+                instruction=(
+                    "The return is written, but the book has not arrived yet. Copy the receipt id, "
+                    "amount, and title from the JSON. Say: once it arrives, send it back with the "
+                    "shipping label, and the refund is issued when we receive it. Do not say the "
+                    "money has been refunded already. Say the receipt and the shipping label are "
+                    "ready. Then ask if they need anything else."
+                ),
+                tools=[wrote],
+                required=required,
+                step="Step: receipt and label",
+            )
         if result.get("exception"):
             return Turn(
                 template=exception_completed(result),
@@ -1107,6 +1154,166 @@ class Machine:
         session.reason_kind, session.sentiment = _reason_labels(session)
         session.phase = "empathy"
         return self._empathy_and_offer(session, today, now)
+
+    def _offer_price_match(self, session: Session) -> Turn:
+        """Found it cheaper elsewhere: offer to keep the book and refund the difference."""
+
+        _remember_match_details(session)
+        session.phase = "price_match_offer"
+        return Turn(
+            template=price_match_offer(session.title or "this book", session.sentiment),
+            instruction=(
+                f"{_tone_clause(session.sentiment)} They found the book for less at another store. "
+                "Acknowledge it briefly, then offer a price match instead of a return: they keep the "
+                "book and you refund the difference. Ask if they'd like that. Do not name an amount "
+                "or a store yet. Do not offer the card refund or store credit yet."
+            ),
+            step="Step: price match offer",
+        )
+
+    def _price_match_offer(self, session: Session, message: str, today: date, now: datetime) -> Turn:
+        _remember_match_details(session)
+        reply = _offer_reply(session)
+        if reply == "accept" or (reply is None and session.match_price_cents is not None):
+            session.phase = "price_match_details"
+            return self._price_match_details(session, message, today, now)
+        if reply == "refuse":
+            return self._decline_price_match(session)
+        return Turn(
+            template=price_match_reask(),
+            instruction=(
+                "They did not clearly say yes or no to the price match. Ask once more, in one short "
+                "question: a price match (keep the book, refund the difference) or the return."
+            ),
+            step="Step: price match offer",
+        )
+
+    def _decline_price_match(self, session: Session) -> Turn:
+        """No price match: the usual refund question."""
+
+        session.phase = "choose_destination"
+        offer = self._offer(session, [])
+        offer.template = f"No problem. {offer.template}"
+        return offer
+
+    def _price_match_details(self, session: Session, message: str, today: date, now: datetime) -> Turn:
+        """Gather the price and the store, then check that store and refund the difference."""
+
+        del today
+        if is_decline(message) or re.search(r"\b(?:never mind|just (?:return|refund))\b", message, re.IGNORECASE):
+            return self._decline_price_match(session)
+        _remember_match_details(session)
+        price, store = session.match_price_cents, session.match_store
+        step = "Step: price match"
+        if price is None or store is None:
+            if price is None and store is None:
+                template = ask_match_details()
+            elif price is None:
+                template = ask_match_price(store or "")
+            else:
+                template = ask_match_store(price)
+            return Turn(
+                template=template,
+                instruction=(
+                    "Ask, in one short question, for what is still missing: the lower price they found, "
+                    "the store, or both. Do not name a price or a store they did not say."
+                ),
+                step=step,
+            )
+        title = session.title or ""
+        checked = run_tool(
+            session.phase,
+            "check_competitor_price",
+            lambda: self._store.check_competitor_price(title, store, price),
+        )
+        matched = run_tool(
+            session.phase,
+            "issue_price_match",
+            lambda: self._store.issue_price_match(session.customer_id, session.order_id or "", store, price, now),
+        )
+        traces = [
+            ToolTrace(
+                name="check_competitor_price",
+                summary=f"Checked {store} for {title}.",
+                payload=checked,
+            ),
+            ToolTrace(
+                name="issue_price_match",
+                summary=(
+                    f"Refunded the {matched.get('difference')} difference."
+                    if matched.get("status") == "matched"
+                    else "Not lower than the price paid."
+                ),
+                payload=matched,
+            ),
+        ]
+        if matched.get("status") == "matched":
+            session.phase = "done"
+            required = [matched["title"], matched["store"], matched["price"], matched["difference"]]
+            if matched.get("last4"):
+                required.append(str(matched["last4"]))
+            return Turn(
+                template=price_matched(matched),
+                instruction=(
+                    "The store check found the price, and the price match is done. Say it's great news, "
+                    "that you see the book at that store for that price, and that you'll refund the "
+                    "difference to the card in the JSON (or as store credit). Copy the store, price, "
+                    "difference, and last4 from the JSON. They keep the book; do not mention a return "
+                    "or a shipping label. Then ask if there's anything else."
+                ),
+                tools=traces,
+                required=required,
+                step=step,
+            )
+        if matched.get("status") != "not_lower":
+            return self._decline_price_match(session)
+        session.phase = "choose_destination"
+        offer = self._offer(session, traces)
+        offer.template = f"{price_not_lower(matched)} {offer.template}"
+        offer.instruction = (
+            "That price is not lower than what they paid, so it cannot be matched. Say so, copying "
+            f"both prices from the JSON. {offer.instruction}"
+        )
+        offer.required = [matched["price"], matched["paid"], *offer.required]
+        return offer
+
+    def _start_in_transit(
+        self,
+        session: Session,
+        detail: dict,
+        opened: ToolTrace,
+        tools: list[ToolTrace],
+        today: date,
+        now: datetime,
+    ) -> Turn:
+        """Not delivered yet: say so, then start the return so they can send it back on arrival."""
+
+        opened.payload.pop("policy", None)
+        opened.payload["awaitingDelivery"] = True
+        status = str(detail.get("status") or "").strip()
+        required = [detail["title"], detail["orderId"], *([status] if status else [])]
+        lead = (
+            "This book has not been delivered yet. Say so and copy its status from the JSON. "
+            "Say you can still start the return now, and they can send it back once it arrives."
+        )
+        turn = self._start_return(session, detail, tools, today, now)
+        if session.phase == "ask_reason":
+            return Turn(
+                template=in_transit_why(detail),
+                instruction=(
+                    f"{lead} Then ask why they want to return it. Do not offer a refund yet. "
+                    "Do not say a return is complete."
+                ),
+                tools=tools,
+                required=required,
+                step="Step: why it's coming back",
+            )
+        # They already said why: the status line leads the refund question.
+        turn.template = f"{in_transit_lead(detail)} {turn.template}"
+        turn.instruction = f"{lead} {turn.instruction}"
+        turn.tools = [*tools, *turn.tools]
+        turn.required = [*required, *turn.required]
+        return turn
 
     def _past_window(
         self,
@@ -1629,6 +1836,8 @@ class Machine:
                 "policy": detail["policy"],
             },
         )
+        if not _is_delivered(detail) and is_in_progress(detail):
+            return self._start_in_transit(session, detail, opened, [listed, opened], today, now)
         if not _is_delivered(detail):
             session.phase = "which_book"
             status = detail.get("status")
@@ -1846,6 +2055,18 @@ def _about_kind(session: Session) -> str | None:
     if understanding is None or "about_book" not in understanding.intents:
         return None
     return understanding.about
+
+
+def _remember_match_details(session: Session) -> None:
+    """Keep a price or store they mentioned, so it is not asked for again."""
+
+    understanding = session.understanding
+    if understanding is None:
+        return
+    if isinstance(understanding.match_price, (int, float)) and understanding.match_price > 0:
+        session.match_price_cents = int(round(understanding.match_price * 100))
+    if isinstance(understanding.match_store, str) and understanding.match_store.strip():
+        session.match_store = understanding.match_store.strip()
 
 
 def _pointed_order(session: Session, orders: list[dict]) -> list[dict]:

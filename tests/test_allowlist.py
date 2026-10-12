@@ -6,6 +6,8 @@ from bookly_support.agent.articles import ARTICLES, public_article
 from bookly_support.agent.allowlist import TOOL_NAMES, ToolNotAllowed, allowed_tools, run_tool
 from bookly_support.agent.discounts import DuplicateDiscount, issue_goodwill_discount
 from bookly_support.agent.eligibility import is_eligible
+from bookly_support.agent.price_match import competitor_price, price_match_record, price_match_result
+from bookly_support.agent.resolve import is_in_progress
 from bookly_support.agent.machine import Machine, Session
 from bookly_support.agent.queries import (
     completed_return,
@@ -44,7 +46,13 @@ def test_only_the_return_tools_exist() -> None:
         "get_policy_article",
         "list_customer_discounts",
         "issue_parcel_label",
+        "check_competitor_price",
+        "issue_price_match",
     )
+    # A price match can run only while one is being offered or gathered.
+    assert "issue_price_match" in allowed_tools("price_match_details")
+    assert "issue_price_match" not in allowed_tools("identify_order")
+    assert "issue_price_match" not in allowed_tools("choose_destination")
     assert allowed_tools("identify_order") == frozenset(
         {
             "list_recent_orders",
@@ -377,7 +385,7 @@ class FakeStore:
         order = next(item for item in self.orders if item["orderId"] == order_id)
         cents = int(order["refundableCents"])
         amount = f"{cents // 100}.{cents % 100:02d}"
-        return {
+        options = {
             "orderId": order_id,
             "title": order["title"],
             "refundableCents": cents,
@@ -385,6 +393,35 @@ class FakeStore:
             "originalPayment": {"available": True, "brand": "Visa", "last4": "4242"},
             "storeCredit": {"available": True, "refundableCents": cents, "amount": amount},
         }
+        if order.get("deliveredAt") is None and is_in_progress(order):
+            options["awaitingDelivery"] = True
+            options["refundOnReceipt"] = True
+        return options
+
+    def check_competitor_price(self, title: str, store: str, price_cents: int) -> dict:
+        self.calls.append("check_competitor_price")
+        return competitor_price(title, store, price_cents)
+
+    def issue_price_match(self, customer_id: str, order_id: str, store: str, price_cents: int, now: datetime) -> dict:
+        assert customer_id == self.customer_id
+        self.calls.append("issue_price_match")
+        matches = self.__dict__.setdefault("price_matches", {})
+        if order_id in matches:
+            return price_match_result(matches[order_id])
+        order = next(item for item in self.orders if item["orderId"] == order_id)
+        record = price_match_record(
+            customer_id=customer_id,
+            order_id=order_id,
+            title=order["title"],
+            paid_cents=int(order["refundableCents"]),
+            store=store,
+            price_cents=price_cents,
+            payment={"brand": "Visa", "last4": "4242"},
+            now=now,
+        )
+        if record["status"] == "matched":
+            matches[order_id] = record
+        return price_match_result(record)
 
     def start_return(
         self,
@@ -403,7 +440,8 @@ class FakeStore:
         order = next(item for item in self.orders if item["orderId"] == order_id)
         delivered = order.get("deliveredAt")
         eligible = is_eligible(delivered if isinstance(delivered, datetime) else None, today, 30)
-        if not return_permitted(eligible=eligible, destination=destination, exception=exception):
+        in_transit = delivered is None and is_in_progress(order)
+        if not in_transit and not return_permitted(eligible=eligible, destination=destination, exception=exception):
             return {
                 "status": "not_completed",
                 "reason": "ineligible",
@@ -411,7 +449,8 @@ class FakeStore:
                 "title": order["title"],
             }
         card = destination == "original_payment"
-        exception_write = exception and destination == "store_credit"
+        exception_write = exception and destination == "store_credit" and not in_transit
+        label_write = exception_write or in_transit
         result = commit_return(
             self.repo,
             customer_id=customer_id,
@@ -427,11 +466,12 @@ class FakeStore:
             reason_kind=reason_kind,
             sentiment=sentiment,
             exception=exception_write,
-            tracking_number="BKLY18440TEST" if exception_write else None,
-            carrier=CARRIER_NAME if exception_write else None,
-            label_id="lbl_fixed" if exception_write else None,
+            awaiting_delivery=in_transit,
+            tracking_number="BKLY18440TEST" if label_write else None,
+            carrier=CARRIER_NAME if label_write else None,
+            label_id="lbl_fixed" if label_write else None,
         )
-        if result.get("status") == "completed" and result.get("exception"):
+        if result.get("status") == "completed" and (result.get("exception") or result.get("awaitingDelivery")):
             result["address"] = self.address
             self.labels[str(result["labelId"])] = {
                 "_id": result["labelId"],

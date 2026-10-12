@@ -216,3 +216,11 @@ def test_a_horror_reply_follows_what_they_said_about_the_scares() -> None:
 
     assert reason_topic("I don't like horror") == "not_for_me"
     assert reason_topic("gave me nightmares") == "too_scary"
+
+
+def test_a_receipt_number_sentence_is_not_spoken() -> None:
+    from bookly_support.voice.desk import unspoken_ids
+
+    assert unspoken_ids("Your return for Circe is set up. Receipt rcpt_ab12. Once the book arrives, send it back.") == (
+        "Your return for Circe is set up. Once the book arrives, send it back."
+    )

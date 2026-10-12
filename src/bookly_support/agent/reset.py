@@ -12,10 +12,12 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 
-RETURNABLE_ORDER_IDS = frozenset(
-    {"BLY-22018", "BLY-22002", "BLY-22044", "BLY-33010", "BLY-18440"}
-)
 PROTECTED_ORDER_IDS = ("BLY-44120", "BLY-44121", "BLY-44122", "BLY-44123")
+# Returns for these orders are cleared. The in-transit orders themselves are never changed,
+# but a return started before delivery is cleared like any other.
+RETURNABLE_ORDER_IDS = frozenset(
+    {"BLY-22018", "BLY-22002", "BLY-22044", "BLY-33010", "BLY-18440", *PROTECTED_ORDER_IDS}
+)
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,9 @@ def reset_bookly_demo(database) -> dict[str, int | str]:
     database.discounts.delete_many({"_id": {"$in": list(plan.discount_ids)}})
     if labels_collection is not None:
         labels_collection.delete_many({"_id": {"$in": list(plan.label_ids)}})
+    matches = getattr(database, "priceMatches", None)
+    if matches is not None:
+        matches.delete_many({"orderId": {"$in": sorted(RETURNABLE_ORDER_IDS)}})
     database.sessions.delete_many({})
 
     if _snapshot(database.orders) != orders_before:

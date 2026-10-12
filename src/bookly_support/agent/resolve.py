@@ -610,3 +610,44 @@ def not_this_book(text: str) -> bool:
     """Right after Mara names the book, "no" or "wrong one" means she has the wrong book."""
 
     return _NOT_THIS_BOOK.fullmatch(_clean(text).strip()) is not None
+
+
+# A price someone says they found: "$12.99", "12.99", "12 dollars", "$12".
+_PRICE = re.compile(
+    r"\$\s?(\d{1,4})(?:\.(\d{2}))?\b|\b(\d{1,4})\.(\d{2})\b|\b(\d{1,4})\s*(?:dollars|bucks)\b",
+    re.IGNORECASE,
+)
+
+
+def quoted_price(text: str) -> int | None:
+    """The price in cents, or None. Claude reads prices said in words."""
+
+    found = _PRICE.search(text)
+    if not found:
+        return None
+    dollars = found.group(1) or found.group(3) or found.group(5)
+    cents = found.group(2) or found.group(4) or "00"
+    return int(dollars) * 100 + int(cents)
+
+
+_STORES = {
+    "barnes & noble": "Barnes & Noble", "barnes and noble": "Barnes & Noble", "b&n": "Barnes & Noble",
+    "amazon": "Amazon", "target": "Target", "walmart": "Walmart", "costco": "Costco",
+    "powell's": "Powell's", "powells": "Powell's", "bookshop.org": "Bookshop.org", "bookshop": "Bookshop.org",
+    "books-a-million": "Books-A-Million", "books a million": "Books-A-Million",
+    "half price books": "Half Price Books", "thriftbooks": "ThriftBooks", "ebay": "eBay", "indigo": "Indigo",
+}
+_AT_STORE = re.compile(r"\b(?:at|on|from)\s+([A-Z][\w'&.-]*(?:\s+(?:&|and|of|[A-Z][\w'&.-]*)){0,3})")
+
+
+def named_store(text: str) -> str | None:
+    """The store they named, or None. Known stores first, then "at <Name>"."""
+
+    lowered = text.casefold()
+    for key in sorted(_STORES, key=len, reverse=True):
+        if re.search(rf"(?<![\w]){re.escape(key)}(?![\w])", lowered):
+            return _STORES[key]
+    found = _AT_STORE.search(text)
+    if found:
+        return found.group(1).strip(" .,!?")
+    return None

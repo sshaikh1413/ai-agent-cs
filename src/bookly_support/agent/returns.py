@@ -44,6 +44,15 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _shipping_back(result: dict, return_doc: dict) -> None:
+    """The stored carrier, tracking number, and label id for sending the book back."""
+
+    for key in ("trackingNumber", "carrier", "labelId"):
+        value = return_doc.get(key)
+        if isinstance(value, str) and value.strip():
+            result[key] = value.strip()
+
+
 def _completed(return_doc: dict, receipt_doc: dict) -> dict:
     result = {
         "status": "completed",
@@ -62,15 +71,11 @@ def _completed(return_doc: dict, receipt_doc: dict) -> dict:
         result["exception"] = True
         result["storeCreditOnly"] = True
         result["refund"] = "store credit"
-        tracking = return_doc.get("trackingNumber")
-        carrier = return_doc.get("carrier")
-        label_id = return_doc.get("labelId")
-        if isinstance(tracking, str) and tracking.strip():
-            result["trackingNumber"] = tracking.strip()
-        if isinstance(carrier, str) and carrier.strip():
-            result["carrier"] = carrier.strip()
-        if isinstance(label_id, str) and label_id.strip():
-            result["labelId"] = label_id.strip()
+        _shipping_back(result, return_doc)
+    if return_doc.get("awaitingDelivery"):
+        result["awaitingDelivery"] = True
+        result["refundOnReceipt"] = True
+        _shipping_back(result, return_doc)
     return result
 
 
@@ -90,6 +95,7 @@ def commit_return(
     reason_kind: str | None = None,
     sentiment: str | None = None,
     exception: bool = False,
+    awaiting_delivery: bool = False,
     tracking_number: str | None = None,
     carrier: str | None = None,
     label_id: str | None = None,
@@ -119,6 +125,10 @@ def commit_return(
     }
     if exception:
         return_doc["exception"] = True
+    if awaiting_delivery:
+        # Started before the book arrived. The refund is issued once the book comes back.
+        return_doc["awaitingDelivery"] = True
+    if exception or awaiting_delivery:
         if isinstance(tracking_number, str) and tracking_number.strip():
             return_doc["trackingNumber"] = tracking_number.strip()
         if isinstance(carrier, str) and carrier.strip():
@@ -137,6 +147,8 @@ def commit_return(
         "last4": last4,
         "issuedAt": now,
     }
+    if awaiting_delivery:
+        receipt_doc["awaitingDelivery"] = True
     try:
         repo.insert_return_and_receipt(return_doc, receipt_doc)
     except DuplicateReturn:

@@ -270,11 +270,66 @@ def dollar_signs(text: str) -> str:
     return _BARE_AMOUNT.sub(r"$\1", text)
 
 
+def price_match_offer(title: str, sentiment: str | None = None) -> str:
+    """They found it cheaper. Offer to keep the book and refund the difference."""
+
+    return (
+        f"{_sorry(sentiment)} you found {title} for less somewhere else. Before you send it back, "
+        "would you like a price match instead? You'd keep the book, and I'd refund the difference."
+    )
+
+
+def price_match_reask() -> str:
+    return (
+        "Would you like a price match, so you keep the book and get the difference back, "
+        "or should I go ahead with the return?"
+    )
+
+
+def ask_match_details() -> str:
+    return "Great. What price did you find, and at which store?"
+
+
+def ask_match_price(store: str) -> str:
+    return f"What price did you see at {store}?"
+
+
+def ask_match_store(price_cents: int) -> str:
+    return f"Which store has it for {dollars(f'{price_cents // 100}.{price_cents % 100:02d}')}?"
+
+
+def price_matched(match: dict) -> str:
+    """The simulated lookup found the price; the difference is refunded."""
+
+    if match.get("destination") == "original_payment" and match.get("last4"):
+        where = f"to your {match.get('brand') or 'card'} ending {match['last4']}"
+    else:
+        where = "as store credit"
+    return (
+        f"Great news! I checked {match['store']}, and I see {match['title']} there for "
+        f"{dollars(match['price'])}. I'll go ahead and refund the {dollars(match['difference'])} "
+        f"difference {where}. Anything else I can do for you?"
+    )
+
+
+def price_not_lower(match: dict) -> str:
+    return (
+        f"I see {match['title']} at {match['store']} for {dollars(match['price'])}, which isn't lower "
+        f"than the {dollars(match['paid'])} you paid, so I can't match it."
+    )
+
+
 def refund_choice(options: dict) -> str:
     title = options["title"]
     order_id = options["orderId"]
     amount = dollars(options["amount"])
     original = options["originalPayment"]
+    if options.get("awaitingDelivery") and original.get("available") and original.get("last4"):
+        return (
+            f"Once it's back with us, I can refund {amount} for {title}, order {order_id}, "
+            f"to the {original['brand']} ending {original['last4']}, or give it to you as store credit. "
+            "Which would you prefer?"
+        )
     if original.get("available") and original.get("last4"):
         return (
             f"I can put {amount} for {title}, order {order_id}, "
@@ -438,6 +493,37 @@ def _window_line(order: dict) -> str:
     if mark:
         return f"{head} {mark}."
     return head
+
+
+def in_transit_lead(order: dict) -> str:
+    """Not delivered yet, but the return can start now. The stored trip status is repeated."""
+
+    status = order.get("status") or "still on its way"
+    return (
+        f"{order['title']}, order {order['orderId']}, hasn't been delivered yet. It's {status}. "
+        "I can still start your return now, and you can send it back once it arrives."
+    )
+
+
+def in_transit_why(order: dict) -> str:
+    return f"{in_transit_lead(order)} What made you want to send it back?"
+
+
+def completed_in_transit(receipt: dict) -> str:
+    """A return started before delivery: refunded once the book comes back."""
+
+    amount = dollars(receipt["amount"])
+    if receipt.get("destination") == "original_payment" and receipt.get("last4"):
+        where = f"to the {receipt.get('brand') or 'card'} ending {receipt['last4']}"
+    else:
+        where = "as store credit"
+    return (
+        f"Your return for {receipt['title']} is set up. Receipt {receipt['receiptId']}. "
+        "Once the book arrives, send it back with the shipping label, and we'll refund "
+        f"{amount} {where} when we receive it. "
+        "The receipt and the shipping label are ready to download. "
+        "Anything else I can help with?"
+    )
 
 
 def still_sending(order: dict) -> str:

@@ -301,13 +301,14 @@ def test_a_book_still_packing_is_not_past_the_window() -> None:
         now=NOW,
     )
     assert "Klara and the Sun" in turn.template
-    assert "has not been delivered" in turn.template
+    assert "hasn't been delivered yet" in turn.template
     assert "packing" in turn.template
     assert "past the" not in turn.template
     assert "past the window" not in turn.template
-    assert session.phase == "which_book"
+    # Not past the window and not an exception: the return starts and Mara asks why.
+    assert session.phase == "ask_reason"
     assert session.exception is False
-    assert session.order_id is None
+    assert session.order_id == "BLY-44120"
     assert "start_return" not in store.calls
     assert unsupported_facts(turn.template, turn.payload) == []
     called_past = f"{turn.template} It is past the return window."
@@ -493,7 +494,7 @@ def test_reset_removes_the_exception_return_receipt_and_label() -> None:
     assert "ret_old_book" not in {doc["_id"] for doc in database.returns.docs}
     assert "rcpt_old_book" not in {doc["_id"] for doc in database.receipts.docs}
     assert database.labels.docs == []
-    assert {doc["_id"] for doc in database.returns.docs} == {"ret_progress"}
+    assert {doc["_id"] for doc in database.returns.docs} == set()
     assert database.orders.docs == orders
     assert database.customers.docs == customers
     kept = next(doc for doc in database.memory.docs if doc["customerId"] == "cust_becky")

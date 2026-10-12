@@ -85,6 +85,8 @@ ToolName = Literal[
     "get_policy_article",
     "list_customer_discounts",
     "issue_parcel_label",
+    "check_competitor_price",
+    "issue_price_match",
 ]
 
 

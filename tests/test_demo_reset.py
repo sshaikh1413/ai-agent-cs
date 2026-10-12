@@ -141,7 +141,8 @@ class _Database:
                     "status": "completed",
                     "reason": "leave this return",
                     "receiptId": "rcpt_progress",
-                    "createdAt": when,
+                    # Older than the Mexican Gothic return, whose reason is the one remembered.
+                    "createdAt": datetime(2026, 10, 1, 12, tzinfo=timezone.utc),
                 },
             ]
         )
@@ -197,9 +198,10 @@ def test_reset_clears_the_session_and_return_and_keeps_the_reason() -> None:
 
     assert result["status"] == "reset"
     assert database.sessions.docs == []
-    assert {doc["_id"] for doc in database.returns.docs} == {"ret_progress"}
-    assert {doc["_id"] for doc in database.receipts.docs} == {"rcpt_progress"}
-    assert {doc["_id"] for doc in database.discounts.docs} == {"disc_progress"}
+    # A return started before delivery is cleared too, so it can be started again.
+    assert {doc["_id"] for doc in database.returns.docs} == set()
+    assert {doc["_id"] for doc in database.receipts.docs} == set()
+    assert {doc["_id"] for doc in database.discounts.docs} == set()
     assert database.orders.docs == orders
     assert database.customers.docs == customers
     assert database.catalog.docs == catalog

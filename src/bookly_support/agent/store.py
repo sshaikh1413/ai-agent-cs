@@ -39,7 +39,8 @@ from bookly_support.agent.queries import (
 )
 from bookly_support.agent.receipt_pdf import ReceiptFactsError, render_return_receipt
 from bookly_support.agent.recommendations import choose_recommendation
-from bookly_support.agent.resolve import longest_catalog_title
+from bookly_support.agent.resolve import is_in_progress, longest_catalog_title
+from bookly_support.agent.price_match import competitor_price, price_match_record, price_match_result
 from bookly_support.agent.returns import DuplicateReturn, commit_return, return_permitted
 
 RECENT_LIMIT = 10
@@ -96,6 +97,11 @@ class MongoStore:
             [("returnId", 1)],
             unique=True,
             name="uniq_label_return",
+        )
+        self._db.priceMatches.create_index(
+            [("customerId", 1), ("orderId", 1)],
+            unique=True,
+            name="uniq_customer_order_price_match",
         )
 
     def close(self) -> None:
@@ -208,7 +214,7 @@ class MongoStore:
             original = {"available": True, "brand": brand.strip(), "last4": last4.strip()}
         cents = int(document["refundableCents"])
         amount = f"{cents // 100}.{cents % 100:02d}"
-        return {
+        options = {
             "orderId": document["_id"],
             "title": _title(document),
             "refundableCents": cents,
@@ -216,6 +222,51 @@ class MongoStore:
             "originalPayment": original,
             "storeCredit": {"available": True, "refundableCents": cents, "amount": amount},
         }
+        if _in_transit(document):
+            options["awaitingDelivery"] = True
+            options["refundOnReceipt"] = True
+        return options
+
+    def check_competitor_price(self, title: str, store: str, price_cents: int) -> dict:
+        """Simulated: no other store is called. It reports the price the reader gave as found."""
+
+        return competitor_price(title, store, price_cents)
+
+    def issue_price_match(
+        self, customer_id: str, order_id: str, store: str, price_cents: int, now: datetime
+    ) -> dict:
+        """Refund the difference to a lower price elsewhere. Once per order; a repeat returns it."""
+
+        existing = self._db.priceMatches.find_one({"customerId": customer_id, "orderId": order_id})
+        if existing is not None:
+            return price_match_result(existing)
+        document = self._db.orders.find_one(get_order(customer_id, order_id))
+        if document is None or document.get("refundableCents") is None:
+            return {"status": "not_matched", "reason": "missing_order", "orderId": order_id}
+        payment = None
+        if document.get("paymentMethodId"):
+            payment = self._db.paymentMethods.find_one(
+                get_payment_method(customer_id, document["paymentMethodId"])
+            )
+        record = price_match_record(
+            customer_id=customer_id,
+            order_id=document["_id"],
+            title=_title(document),
+            paid_cents=int(document["refundableCents"]),
+            store=store,
+            price_cents=price_cents,
+            payment=payment,
+            now=now,
+        )
+        if record["status"] != "matched":
+            return price_match_result(record)
+        try:
+            self._db.priceMatches.insert_one(record)
+        except DuplicateKeyError:
+            stored = self._db.priceMatches.find_one({"customerId": customer_id, "orderId": order_id})
+            if stored is not None:
+                return price_match_result(stored)
+        return price_match_result(record)
 
     def recommend_book(self, customer_id: str, seed: str) -> dict:
         owned: list[str] = []
@@ -290,7 +341,11 @@ class MongoStore:
         policy = self._policy()
         delivered = _aware(document.get("deliveredAt"))
         eligible = is_eligible(delivered, today, policy["returnWindowDays"])
-        if not return_permitted(eligible=eligible, destination=destination, exception=exception):
+        # A book still on its way can be returned now and sent back once it arrives.
+        in_transit = _in_transit(document)
+        if not in_transit and not return_permitted(
+            eligible=eligible, destination=destination, exception=exception
+        ):
             return {
                 "status": "not_completed",
                 "reason": "ineligible",
@@ -321,7 +376,7 @@ class MongoStore:
         tracking = None
         carrier = None
         label_id = None
-        if exception and destination == "store_credit":
+        if (exception and destination == "store_credit") or in_transit:
             tracking = _new_tracking()
             carrier = CARRIER_NAME
             label_id = _new_label_id()
@@ -339,12 +394,13 @@ class MongoStore:
             reason=reason,
             reason_kind=reason_kind,
             sentiment=sentiment,
-            exception=exception and destination == "store_credit",
+            exception=exception and destination == "store_credit" and not in_transit,
+            awaiting_delivery=in_transit,
             tracking_number=tracking,
             carrier=carrier,
             label_id=label_id,
         )
-        if result.get("status") == "completed" and result.get("exception"):
+        if result.get("status") == "completed" and (result.get("exception") or result.get("awaitingDelivery")):
             self._ensure_label(customer_id, result)
             address = self._address_text(customer_id)
             if address:
@@ -609,6 +665,14 @@ class MongoStore:
             if address:
                 result["address"] = address
             self._ensure_label(customer_id, result)
+        if existing.get("awaitingDelivery"):
+            result["awaitingDelivery"] = True
+            result["refundOnReceipt"] = True
+            for key in ("trackingNumber", "carrier", "labelId"):
+                value = existing.get(key)
+                if isinstance(value, str) and value.strip():
+                    result[key] = value.strip()
+            self._ensure_label(customer_id, result)
         return result
 
     def _completed_for_label(
@@ -804,3 +868,9 @@ class _MongoDiscounts:
             self._db.discounts.insert_one(document)
         except DuplicateKeyError:
             raise DuplicateDiscount from None
+
+
+def _in_transit(document: dict) -> bool:
+    """Not delivered yet, and on a customer-facing trip status (packing, shipped, ...)."""
+
+    return document.get("deliveredAt") is None and is_in_progress(document)

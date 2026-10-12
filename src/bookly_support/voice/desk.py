@@ -25,7 +25,6 @@ _UNSPOKEN = (
     (re.compile(r"\border\s+(?:number\s+)?BLY-\d+", re.IGNORECASE), "order"),
     (re.compile(r"\bBLY-\d+", re.IGNORECASE), "that order"),
     (re.compile(r"\b[Rr]eceipt\s+rcpt_\w+\s+for\b"), "The refund for"),
-    (re.compile(r"\b[Rr]eceipt\s+rcpt_\w+"), "The receipt"),
     # Any other sentence that carries a receipt id only reads the id out; the email line covers it.
     (re.compile(r"(?:^|(?<=[.!?]))\s*[^.!?]*\brcpt_\w+[^.!?]*[.!?]?"), ""),
 )
@@ -96,7 +95,7 @@ def emailed_documents(text: str, *, receipt: bool, label: bool) -> str:
         line = "I've emailed you your return confirmation receipt."
     else:
         line = "I've emailed you your shipping label."
-    if receipt:
+    if receipt and not re.search(r"\bwhen we receive\b|\bonce we receive\b", text, re.IGNORECASE):
         line += " Once we receive the book, we'll process your refund."
     if not receipt:
         return " ".join([line, *kept])

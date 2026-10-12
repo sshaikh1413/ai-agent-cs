@@ -16,6 +16,8 @@ TOOL_NAMES = (
     "get_policy_article",
     "list_customer_discounts",
     "issue_parcel_label",
+    "check_competitor_price",
+    "issue_price_match",
 )
 
 Phase = str
@@ -27,6 +29,7 @@ _ORDER_READS = frozenset(
 )
 _DISCOUNT_READ = frozenset({"list_customer_discounts"})
 _LABEL = frozenset({"issue_parcel_label"})
+_PRICE_MATCH = frozenset({"get_refund_options", "check_competitor_price", "issue_price_match"})
 
 _ALLOWED: dict[str, frozenset[str]] = {
     "identify_order": _ORDER_READS | _DISCOUNT_READ | _LABEL,
@@ -36,6 +39,8 @@ _ALLOWED: dict[str, frozenset[str]] = {
     "ask_reason": _ORDER_READS | _LABEL,
     "empathy": frozenset({"recommend_book", "issue_goodwill_discount", "lookup_catalog"}) | _LABEL,
     "choose_destination": _ORDER_READS | frozenset({"get_refund_options"}) | _LABEL,
+    "price_match_offer": _ORDER_READS | _PRICE_MATCH | _LABEL,
+    "price_match_details": _ORDER_READS | _PRICE_MATCH | _LABEL,
     "write": frozenset({"start_return", "lookup_catalog"}) | _LABEL,
     "done": _ORDER_READS | frozenset({"recommend_book"}) | _DISCOUNT_READ | _LABEL,
     "closed": _LABEL,
