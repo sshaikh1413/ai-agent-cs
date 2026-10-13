@@ -136,6 +136,7 @@ cp .env.example .env
 | `ANTHROPIC_WORKSPACE_ID` | Yes | Starts with `wrkspc_`, from the Anthropic Console under Settings → Workspaces |
 | `MONGODB_URI` | Yes | `mongodb+srv://user:password@cluster.../?appName=...` |
 | `ANTHROPIC_MODEL` | No | Ignored; the desk always uses `claude-sonnet-5-5` |
+| `CORS_ALLOWED_ORIGINS` | No | Comma-separated browser origins allowed in addition to the local `localhost:8643` and `127.0.0.1:8643`. On the deployed `bookly-api` service, set `CORS_ALLOWED_ORIGINS=https://ai-agent-cs-production.up.railway.app` |
 
 `.env` is git-ignored. Never commit it.
 

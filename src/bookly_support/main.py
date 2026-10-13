@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -17,12 +18,30 @@ from bookly_support.config import ALLOWED_CUSTOMER_IDS, CUSTOMER_ID, load_settin
 from bookly_support.voice.socket import handle_voice
 
 app = FastAPI(title="Bookly support desk", version="0.2.0")
+_LOCAL_ORIGINS = [
+    "http://127.0.0.1:8643",
+    "http://localhost:8643",
+]
+
+
+def _allowed_origins() -> list[str]:
+    """Local dev origins plus any in CORS_ALLOWED_ORIGINS (comma-separated).
+
+    On the deployed bookly-api service, set
+    CORS_ALLOWED_ORIGINS=https://ai-agent-cs-production.up.railway.app
+    """
+
+    origins = list(_LOCAL_ORIGINS)
+    for raw in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(","):
+        origin = raw.strip().rstrip("/")
+        if origin and origin not in origins:
+            origins.append(origin)
+    return origins
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:8643",
-        "http://localhost:8643",
-    ],
+    allow_origins=_allowed_origins(),
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
