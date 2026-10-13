@@ -69,6 +69,7 @@ from bookly_support.agent.templates import (
     handoff,
     in_transit_why,
     in_transit_lead,
+    in_transit_status,
     late_apology,
     list_orders,
     missing_order,
@@ -1163,10 +1164,11 @@ class Machine:
         return Turn(
             template=price_match_offer(session.title or "this book", session.sentiment),
             instruction=(
-                f"{_tone_clause(session.sentiment)} They found the book for less at another store. "
-                "Acknowledge it briefly, then offer a price match instead of a return: they keep the "
-                "book and you refund the difference. Ask if they'd like that. Do not name an amount "
-                "or a store yet. Do not offer the card refund or store credit yet."
+                "They found the book for less at another store. That is good news for them, so sound "
+                "pleased for them: do not apologize, say sorry, or call it a letdown. Then offer a price "
+                "match instead of a return: they keep the book and you refund the difference. Ask if "
+                "they'd like that. Do not name an amount or a store yet. Do not offer the card refund "
+                "or store credit yet."
             ),
             step="Step: price match offer",
         )
@@ -1189,12 +1191,22 @@ class Machine:
         )
 
     def _decline_price_match(self, session: Session) -> Turn:
-        """No price match: the usual refund question."""
+        """No price match: the usual refund question, or the store-credit exception past the window."""
 
-        session.phase = "choose_destination"
-        offer = self._offer(session, [])
+        offer = self._refund_question(session, [])
         offer.template = f"No problem. {offer.template}"
         return offer
+
+    def _refund_question(self, session: Session, prior: list[ToolTrace]) -> Turn:
+        """Card or store credit inside the window; past it, only the one-time store credit."""
+
+        if session.exception:
+            session.phase = "exception_offer"
+            offer = self._offer_exception(session)
+            offer.tools = [*prior, *offer.tools]
+            return offer
+        session.phase = "choose_destination"
+        return self._offer(session, prior)
 
     def _price_match_details(self, session: Session, message: str, today: date, now: datetime) -> Turn:
         """Gather the price and the store, then check that store and refund the difference."""
@@ -1249,6 +1261,8 @@ class Machine:
         ]
         if matched.get("status") == "matched":
             session.phase = "done"
+            # They keep the book: a past-window store-credit offer is no longer open.
+            session.exception = False
             required = [matched["title"], matched["store"], matched["price"], matched["difference"]]
             if matched.get("last4"):
                 required.append(str(matched["last4"]))
@@ -1267,8 +1281,7 @@ class Machine:
             )
         if matched.get("status") != "not_lower":
             return self._decline_price_match(session)
-        session.phase = "choose_destination"
-        offer = self._offer(session, traces)
+        offer = self._refund_question(session, traces)
         offer.template = f"{price_not_lower(matched)} {offer.template}"
         offer.instruction = (
             "That price is not lower than what they paid, so it cannot be matched. Say so, copying "
@@ -1308,9 +1321,17 @@ class Machine:
                 required=required,
                 step="Step: why it's coming back",
             )
-        # They already said why: the status line leads the refund question.
-        turn.template = f"{in_transit_lead(detail)} {turn.template}"
-        turn.instruction = f"{lead} {turn.instruction}"
+        # They already said why. A price match keeps the book, so only the status leads it;
+        # otherwise the status and the start-the-return line lead the refund question.
+        if session.phase == "price_match_offer":
+            turn.template = f"{in_transit_status(detail)} {turn.template}"
+            turn.instruction = (
+                "This book has not been delivered yet. Say so and copy its status from the JSON. "
+                f"{turn.instruction}"
+            )
+        else:
+            turn.template = f"{in_transit_lead(detail)} {turn.template}"
+            turn.instruction = f"{lead} {turn.instruction}"
         turn.tools = [*tools, *turn.tools]
         turn.required = [*required, *turn.required]
         return turn
@@ -1373,6 +1394,15 @@ class Machine:
             )
         session.reason = reason
         session.reason_kind, session.sentiment = _reason_labels(session)
+        if _reason_topic(session) == "cheaper_elsewhere":
+            offer = self._offer_price_match(session)
+            return Turn(
+                template=f"{past_window(shown, card=card, ask=False)} {offer.template}",
+                instruction=f"{facts} They already said what happened, so do not ask. {offer.instruction}",
+                tools=tools,
+                required=required,
+                step=offer.step,
+            )
         session.phase = "exception_offer"
         offer = self._offer_exception(session)
         return Turn(
@@ -1622,6 +1652,8 @@ class Machine:
             return self._reask_exception(session, now.date())
         session.reason = message.strip()
         session.reason_kind, session.sentiment = _reason_labels(session)
+        if _reason_topic(session) == "cheaper_elsewhere":
+            return self._offer_price_match(session)
         session.phase = "exception_offer"
         return self._offer_exception(session)
 

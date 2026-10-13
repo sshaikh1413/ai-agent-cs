@@ -23,6 +23,10 @@ def test_cheaper_elsewhere_offers_a_price_match_first() -> None:
     assert session.phase == "price_match_offer"
     assert offer.step == "Step: price match offer"
     assert "would you like a price match instead?" in offer.template
+    # A lower price is good news for the reader: no apology.
+    assert offer.template.startswith("Nice find!")
+    assert "sorry" not in offer.template.lower()
+    assert "do not apologize" in offer.instruction
     assert "Visa" not in offer.template
     assert "get_refund_options" not in store.calls
 
@@ -89,3 +93,61 @@ def test_price_and_store_phrases() -> None:
     assert quoted_price("yes") is None
     assert named_store("at barnes and noble") == "Barnes & Noble"
     assert named_store("I saw it at Joe's Books") == "Joe's Books"
+
+
+def _past_window_offer() -> tuple[FakeStore, Machine, Session]:
+    store = FakeStore(_becky_orders())
+    machine = Machine(store)
+    session = Session(id="conv_match_late", customer_id="cust_becky")
+    machine.step(session, "I want to return Piranesi", today=TODAY, now=NOW)
+    assert session.phase == "exception_why"
+    return store, machine, session
+
+
+def test_past_the_window_cheaper_elsewhere_offers_a_price_match() -> None:
+    store, machine, session = _past_window_offer()
+    offer = machine.step(session, "I found it cheaper somewhere else", today=TODAY, now=NOW)
+    assert session.phase == "price_match_offer"
+    assert offer.template.startswith("Nice find!")
+    assert "store credit" not in offer.template
+
+    machine.step(session, "yes", today=TODAY, now=NOW)
+    done = machine.step(session, "$11.00 at Target", today=TODAY, now=NOW)
+    assert "refund the $4.99 difference" in done.template
+    assert session.phase == "done"
+    assert session.exception is False
+    # They keep the book: a later "yes" does not write the store-credit return.
+    machine.step(session, "yes", today=TODAY, now=NOW)
+    assert "start_return" not in store.calls
+
+
+def test_past_the_window_no_to_a_price_match_goes_back_to_store_credit_only() -> None:
+    store, machine, session = _past_window_offer()
+    machine.step(session, "I found it cheaper somewhere else", today=TODAY, now=NOW)
+    back = machine.step(session, "no thanks", today=TODAY, now=NOW)
+    assert session.phase == "exception_offer"
+    assert back.template.startswith("No problem. I can make a one-time store credit exception for $15.99")
+    assert "Visa" not in back.template
+    assert "start_return" not in store.calls
+
+
+def test_past_the_window_with_the_reason_up_front_offers_a_price_match() -> None:
+    _store, machine, session = _past_window_offer()
+    fresh = Session(id="conv_match_late_2", customer_id="cust_becky")
+    turn = machine.step(fresh, "I want to return Piranesi because I found it cheaper at Target", today=TODAY, now=NOW)
+    assert fresh.phase == "price_match_offer"
+    assert "past our 30-day return window" in turn.template
+    assert "Nice find! Before you send Piranesi back" in turn.template
+
+
+def test_a_book_on_its_way_found_cheaper_does_not_repeat_itself() -> None:
+    store = FakeStore(_becky_orders())
+    machine = Machine(store)
+    session = Session(id="conv_match_transit", customer_id="cust_becky")
+    turn = machine.step(session, "I want to return The Night Circus because I found it cheaper elsewhere", today=TODAY, now=NOW)
+    assert session.phase == "price_match_offer"
+    assert turn.template == (
+        "The Night Circus, order BLY-44121, hasn't been delivered yet. It's shipped. "
+        "Nice find! Before you send The Night Circus back, would you like a price match instead? "
+        "You'd keep the book, and I'd refund the difference."
+    )

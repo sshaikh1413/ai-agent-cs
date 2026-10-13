@@ -271,11 +271,13 @@ def dollar_signs(text: str) -> str:
 
 
 def price_match_offer(title: str, sentiment: str | None = None) -> str:
-    """They found it cheaper. Offer to keep the book and refund the difference."""
+    """They found it cheaper: good news for them, so no apology. Offer to keep the book
+    and refund the difference. Sentiment does not change this line."""
 
+    del sentiment
     return (
-        f"{_sorry(sentiment)} you found {title} for less somewhere else. Before you send it back, "
-        "would you like a price match instead? You'd keep the book, and I'd refund the difference."
+        f"Nice find! Before you send {title} back, would you like a price match instead? "
+        "You'd keep the book, and I'd refund the difference."
     )
 
 
@@ -495,14 +497,17 @@ def _window_line(order: dict) -> str:
     return head
 
 
-def in_transit_lead(order: dict) -> str:
-    """Not delivered yet, but the return can start now. The stored trip status is repeated."""
+def in_transit_status(order: dict) -> str:
+    """Not delivered yet. The stored trip status is repeated."""
 
     status = order.get("status") or "still on its way"
-    return (
-        f"{order['title']}, order {order['orderId']}, hasn't been delivered yet. It's {status}. "
-        "I can still start your return now, and you can send it back once it arrives."
-    )
+    return f"{order['title']}, order {order['orderId']}, hasn't been delivered yet. It's {status}."
+
+
+def in_transit_lead(order: dict) -> str:
+    """Not delivered yet, but the return can start now."""
+
+    return f"{in_transit_status(order)} I can still start your return now, and you can send it back once it arrives."
 
 
 def in_transit_why(order: dict) -> str:
