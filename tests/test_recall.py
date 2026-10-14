@@ -250,7 +250,7 @@ def test_a_book_on_its_way_can_be_returned_and_is_refunded_on_receipt() -> None:
     assert payload["status"] == "completed"
     assert payload["awaitingDelivery"] is True
     assert payload["destination"] == "original_payment"
-    assert "Once the book arrives, send it back with the shipping label" in done.template
+    assert "Once the book arrives, you have 14 days to send it back with the prepaid shipping label" in done.template
     assert "when we receive it" in done.template
     assert done.step == "Step: receipt and label"
     assert receipt_download(done, "cust_becky") is not None

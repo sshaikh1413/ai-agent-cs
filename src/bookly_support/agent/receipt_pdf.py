@@ -103,10 +103,17 @@ def receipt_rows(
         rows.append(("Reason label", label))
     if return_doc.get("awaitingDelivery"):
         destination = f"{destination}, once we receive the book"
+    days = int(return_doc.get("shipBackDays") or 14)
+    if return_doc.get("awaitingDelivery"):
+        send_back = f"Within {days} days of delivery, with the prepaid label"
+    else:
+        due = _due_text(receipt.get("issuedAt") or return_doc.get("createdAt"), days)
+        send_back = f"Within {days} days{f', by {due}' if due else ''}, with the prepaid label"
     rows.extend(
         [
             ("Refund", destination),
             ("Amount", amount),
+            ("Send back", send_back),
             ("Receipt", receipt_id),
             ("Date", issued),
         ]
@@ -173,6 +180,22 @@ def _destination(return_doc: dict, receipt: dict) -> str:
     if isinstance(brand, str) and brand.strip() and isinstance(last4, str) and last4.strip():
         return f"{brand.strip()} ending {last4.strip()}"
     return "Original payment"
+
+
+def _due_text(value: object, days: int) -> str | None:
+    """The send-back date: the issue date plus the days allowed."""
+
+    from datetime import timedelta
+
+    if isinstance(value, datetime):
+        return _date_text(value + timedelta(days=days))
+    if isinstance(value, str) and value.strip():
+        try:
+            moment = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return _date_text(moment + timedelta(days=days))
+    return None
 
 
 def _date_text(value: object) -> str | None:

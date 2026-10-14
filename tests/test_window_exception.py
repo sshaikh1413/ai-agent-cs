@@ -134,7 +134,8 @@ def test_old_title_asks_why_and_yes_writes_one_store_credit_exception() -> None:
     assert "15.99" in done.template
     assert "store credit" in done.template
     assert done.tools[0].payload["receiptId"] in done.template
-    assert "parcel label" in done.template
+    assert "shipping label" in done.template
+    assert "You have 14 days to send the book back" in done.template
     receipt = receipt_download(done, "cust_becky")
     label = label_download(done, "cust_becky")
     assert receipt is not None and receipt.receipt_id == "rcpt_fixed"
@@ -227,7 +228,8 @@ def test_yeah_thatd_be_great_writes_one_store_credit_exception() -> None:
     assert "15.99" in done.template
     assert "store credit" in done.template
     assert done.tools[0].payload["receiptId"] in done.template
-    assert "parcel label" in done.template
+    assert "shipping label" in done.template
+    assert "You have 14 days to send the book back" in done.template
     receipt = receipt_download(done, "cust_becky")
     label = label_download(done, "cust_becky")
     assert receipt is not None and receipt.receipt_id == "rcpt_fixed"
@@ -283,12 +285,13 @@ def test_in_window_title_stays_on_the_normal_return_and_card_is_fine_is_visa() -
     assert done.tools[0].payload["destination"] == "original_payment"
     assert done.tools[0].payload.get("exception") is not True
     assert "Visa" in done.template
-    assert done.step == "Step: receipt"
-    assert label_download(done, "cust_becky") is None
+    assert done.step == "Step: receipt and label"
+    # An in-window card return also comes with its prepaid label.
+    assert label_download(done, "cust_becky") is not None
     stored = next(iter(store.repo.returns.values()))
     assert stored.get("exception") is not True
-    assert "trackingNumber" not in stored
-    assert store.labels == {}
+    assert stored["trackingNumber"]
+    assert len(store.labels) == 1
 
 
 def test_a_book_still_packing_is_not_past_the_window() -> None:

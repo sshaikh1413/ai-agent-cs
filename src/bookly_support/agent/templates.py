@@ -348,6 +348,16 @@ def refund_choice(options: dict) -> str:
     )
 
 
+def _send_back(receipt: dict) -> str:
+    """The return confirmation, the prepaid label, and the send-back deadline."""
+
+    days = receipt.get("shipBackDays") or 14
+    return (
+        "Your return confirmation receipt and a prepaid shipping label are ready to download. "
+        f"You have {days} days to send the book back with the label. "
+    )
+
+
 def completed(receipt: dict) -> str:
     amount = dollars(receipt["amount"])
     title = receipt["title"]
@@ -357,13 +367,13 @@ def completed(receipt: dict) -> str:
         return (
             f"Your return is complete. Receipt {receipt_id} for {title} "
             f"is {amount} back on the {brand} ending {receipt['last4']}. "
-            "It's ready to download. "
+            f"{_send_back(receipt)}"
             "Anything else I can help with?"
         )
     return (
         f"Your return is complete. Receipt {receipt_id} for {title} "
         f"is {amount} in store credit. "
-        "It's ready to download. "
+        f"{_send_back(receipt)}"
         "Anything else I can help with?"
     )
 
@@ -526,11 +536,12 @@ def completed_in_transit(receipt: dict) -> str:
         where = f"to the {receipt.get('brand') or 'card'} ending {receipt['last4']}"
     else:
         where = "as store credit"
+    days = receipt.get("shipBackDays") or 14
     return (
         f"Your return for {receipt['title']} is set up. Receipt {receipt['receiptId']}. "
-        "Once the book arrives, send it back with the shipping label, and we'll refund "
-        f"{amount} {where} when we receive it. "
-        "The receipt and the shipping label are ready to download. "
+        f"Once the book arrives, you have {days} days to send it back with the prepaid shipping label, "
+        f"and we'll refund {amount} {where} when we receive it. "
+        "Your return confirmation receipt and the label are ready to download. "
         "Anything else I can help with?"
     )
 
@@ -577,7 +588,7 @@ def exception_completed(receipt: dict) -> str:
     return (
         f"Your return is complete. Receipt {receipt['receiptId']} for {receipt['title']} "
         f"is {dollars(receipt['amount'])} in store credit. "
-        "The receipt and the parcel label are ready to download. "
+        f"{_send_back(receipt)}"
         "Anything else I can help with?"
     )
 

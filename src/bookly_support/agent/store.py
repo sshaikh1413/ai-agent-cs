@@ -41,7 +41,7 @@ from bookly_support.agent.receipt_pdf import ReceiptFactsError, render_return_re
 from bookly_support.agent.recommendations import choose_recommendation
 from bookly_support.agent.resolve import is_in_progress, longest_catalog_title
 from bookly_support.agent.price_match import competitor_price, price_match_record, price_match_result
-from bookly_support.agent.returns import DuplicateReturn, commit_return, return_permitted
+from bookly_support.agent.returns import SHIP_BACK_DAYS, DuplicateReturn, commit_return, return_permitted
 
 RECENT_LIMIT = 10
 
@@ -373,13 +373,10 @@ class MongoStore:
         if destination != "original_payment":
             safe_last4 = None
             safe_brand = None
-        tracking = None
-        carrier = None
-        label_id = None
-        if (exception and destination == "store_credit") or in_transit:
-            tracking = _new_tracking()
-            carrier = CARRIER_NAME
-            label_id = _new_label_id()
+        # Every return gets a prepaid label to send the book back with.
+        tracking = _new_tracking()
+        carrier = CARRIER_NAME
+        label_id = _new_label_id()
         result = commit_return(
             _MongoReturns(self._db),
             customer_id=customer_id,
@@ -400,7 +397,7 @@ class MongoStore:
             carrier=carrier,
             label_id=label_id,
         )
-        if result.get("status") == "completed" and (result.get("exception") or result.get("awaitingDelivery")):
+        if result.get("status") == "completed":
             self._ensure_label(customer_id, result)
             address = self._address_text(customer_id)
             if address:
@@ -648,31 +645,22 @@ class MongoStore:
             "brand": receipt.get("brand"),
             "last4": receipt.get("last4"),
         }
+        result["shipBackDays"] = int(existing.get("shipBackDays") or SHIP_BACK_DAYS)
+        for key in ("trackingNumber", "carrier", "labelId"):
+            value = existing.get(key)
+            if isinstance(value, str) and value.strip():
+                result[key] = value.strip()
         if existing.get("exception"):
             result["exception"] = True
             result["storeCreditOnly"] = True
             result["refund"] = "store credit"
-            tracking = existing.get("trackingNumber")
-            carrier = existing.get("carrier")
-            label_id = existing.get("labelId")
-            if isinstance(tracking, str) and tracking.strip():
-                result["trackingNumber"] = tracking.strip()
-            if isinstance(carrier, str) and carrier.strip():
-                result["carrier"] = carrier.strip()
-            if isinstance(label_id, str) and label_id.strip():
-                result["labelId"] = label_id.strip()
-            address = self._address_text(customer_id)
-            if address:
-                result["address"] = address
-            self._ensure_label(customer_id, result)
         if existing.get("awaitingDelivery"):
             result["awaitingDelivery"] = True
             result["refundOnReceipt"] = True
-            for key in ("trackingNumber", "carrier", "labelId"):
-                value = existing.get(key)
-                if isinstance(value, str) and value.strip():
-                    result[key] = value.strip()
-            self._ensure_label(customer_id, result)
+        address = self._address_text(customer_id)
+        if address:
+            result["address"] = address
+        self._ensure_label(customer_id, result)
         return result
 
     def _completed_for_label(

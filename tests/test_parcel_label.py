@@ -28,10 +28,13 @@ def _visa_done() -> tuple[FakeStore, Machine, Session]:
     done = machine.step(session, "the original payment method", today=TODAY, now=NOW)
     assert session.phase == "done"
     assert done.tools[0].payload["destination"] == "original_payment"
-    assert done.tools[0].payload.get("labelId") is None
+    # Every return comes with its prepaid label and a 14-day send-back window.
+    assert done.tools[0].payload["labelId"] == "lbl_fixed"
+    assert done.tools[0].payload["shipBackDays"] == 14
+    assert label_download(done, "cust_becky") is not None
     stored = next(iter(store.repo.returns.values()))
-    assert "trackingNumber" not in stored
-    assert store.labels == {}
+    assert stored["trackingNumber"]
+    assert len(store.labels) == 1
     return store, machine, session
 
 

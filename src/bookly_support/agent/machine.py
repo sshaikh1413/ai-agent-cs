@@ -1012,15 +1012,16 @@ class Machine:
         session.phase = "done"
         session.return_id = result.get("returnId")
         if result.get("awaitingDelivery"):
-            required = [result["receiptId"], result["title"], result["amount"]]
+            required = [result["receiptId"], result["title"], result["amount"], str(result.get("shipBackDays") or 14)]
             if result.get("last4"):
                 required.append(str(result["last4"]))
             return Turn(
                 template=completed_in_transit(result),
                 instruction=(
                     "The return is written, but the book has not arrived yet. Copy the receipt id, "
-                    "amount, and title from the JSON. Say: once it arrives, send it back with the "
-                    "shipping label, and the refund is issued when we receive it. Do not say the "
+                    "amount, and title from the JSON. Say: once it arrives, they have the number of days "
+                    "in shipBackDays to send it back with the prepaid shipping label, and the refund is "
+                    "issued when we receive it. Do not say the "
                     "money has been refunded already. Say the receipt and the shipping label are "
                     "ready. Then ask if they need anything else."
                 ),
@@ -1034,17 +1035,18 @@ class Machine:
                 instruction=(
                     "The write returned status completed as store credit. "
                     "Confirm the store credit, the amount, and the receipt id from the JSON. "
-                    "Say the receipt and the parcel label are ready. "
+                    "Say the return confirmation receipt and a prepaid shipping label are ready, and that "
+                    "they have the number of days in shipBackDays to send the book back with the label. "
                     "Do not say the Visa was refunded. "
                     "Do not name a carrier that is not in the JSON. "
                     "Do not invent a download address. "
                     "Then ask if they need anything else."
                 ),
                 tools=[wrote],
-                required=[result["receiptId"], result["title"], result["amount"], "store credit"],
+                required=[result["receiptId"], result["title"], result["amount"], "store credit", str(result.get("shipBackDays") or 14)],
                 step="Step: receipt and label",
             )
-        required = [result["receiptId"], result["title"], result["amount"]]
+        required = [result["receiptId"], result["title"], result["amount"], str(result.get("shipBackDays") or 14)]
         if result.get("last4"):
             required.append(str(result["last4"]))
         return Turn(
@@ -1052,12 +1054,14 @@ class Machine:
             instruction=(
                 "The write returned status completed. Say the return is complete. "
                 "Copy the receipt id, amount, title, and last4 from the JSON. "
-                "Do not invent a download address. "
+                "Say the return confirmation receipt and a prepaid shipping label are ready, and that "
+                "they have the number of days in shipBackDays to send the book back with the label. "
+                "Do not name a carrier that is not in the JSON. Do not invent a download address. "
                 "Then ask if they need anything else."
             ),
             tools=[wrote],
             required=required,
-            step="Step: receipt",
+            step="Step: receipt and label",
         )
 
     def _remember_exception(self, session: Session, detail: dict) -> None:

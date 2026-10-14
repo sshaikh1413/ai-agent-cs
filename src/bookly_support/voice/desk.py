@@ -73,8 +73,14 @@ def spoken_amounts(text: str) -> str:
             return _spoken_money(match)
         return _spoken_money(re.match(r"(\d+)\.(\d{2})", f"{match.group(3)}.{match.group(4)}"))  # type: ignore[arg-type]
 
+    starts_with_amount = text.lstrip().startswith("$")
     text = _MONEY.sub(money, text)
-    return _LAST_FOUR.sub(lambda m: f"ending in {' '.join(m.group(2))}", text)
+    text = _LAST_FOUR.sub(lambda m: f"ending in {' '.join(m.group(2))}", text)
+    # "$17.00 is going back" became "seventeen dollars is going back": keep the capital.
+    text = re.sub(r"([.!?]\s+)([a-z])", lambda m: m.group(1) + m.group(2).upper(), text)
+    if starts_with_amount:
+        text = text[:1].upper() + text[1:]
+    return text
 
 
 # A caller cannot click a download. The receipt and the label go by email instead.
@@ -88,6 +94,7 @@ def emailed_documents(text: str, *, receipt: bool, label: bool) -> str:
     if not receipt and not label:
         return text
     sentences = [part for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part]
+    dropped = [i for i, sentence in enumerate(sentences) if _DOWNLOAD.search(sentence)]
     kept = [sentence for sentence in sentences if not _DOWNLOAD.search(sentence)]
     if receipt and label:
         line = "I've emailed you your return confirmation receipt and shipping label."
@@ -99,6 +106,14 @@ def emailed_documents(text: str, *, receipt: bool, label: bool) -> str:
         line += " Once we receive the book, we'll process your refund."
     if not receipt:
         return " ".join([line, *kept])
+    if dropped:
+        # The email line takes the place of the first "ready to download" sentence.
+        at = dropped[0] - sum(1 for i in dropped if i < dropped[0])
+        return " ".join([*kept[:at], line, *kept[at:]])
+    # Otherwise it goes before the first sentence about the label or sending the book back.
+    for at, sentence in enumerate(kept):
+        if re.search(r"\blabel\b|\bsend (?:the book|it) back\b", sentence, re.IGNORECASE):
+            return " ".join([*kept[:at], line, *kept[at:]])
     tail = [kept.pop()] if kept and kept[-1].endswith("?") else []
     return " ".join([*kept, line, *tail])
 

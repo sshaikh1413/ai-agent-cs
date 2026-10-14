@@ -355,7 +355,7 @@ def test_card_is_fine_still_selects_visa() -> None:
     done = machine.step(session, "card is fine", today=TODAY, now=NOW)
     assert done.tools[0].payload["destination"] == "original_payment"
     assert "Visa" in done.template
-    assert done.step == "Step: receipt"
+    assert done.step == "Step: receipt and label"
 
 
 def test_status_question_returns_the_stored_status() -> None:

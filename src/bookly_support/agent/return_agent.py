@@ -180,9 +180,7 @@ def label_download(turn: Turn, customer_id: str) -> ParcelLabel | None:
     for tool in turn.tools:
         payload = tool.payload
         if tool.name == "start_return":
-            if payload.get("status") != "completed" or not (
-                payload.get("exception") or payload.get("awaitingDelivery")
-            ):
+            if payload.get("status") != "completed":
                 continue
         elif tool.name == "issue_parcel_label":
             if payload.get("status") != "ready":

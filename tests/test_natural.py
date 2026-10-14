@@ -57,11 +57,11 @@ def test_amounts_and_card_digits_are_spoken_as_words() -> None:
     assert number_words(16) == "sixteen"
     assert number_words(1299) == "one thousand two hundred ninety-nine"
     assert spoken_amounts("$16.99 back on the Visa ending 4242") == (
-        "sixteen dollars and ninety-nine cents back on the Visa ending in 4 2 4 2"
+        "Sixteen dollars and ninety-nine cents back on the Visa ending in 4 2 4 2"
     )
     assert spoken_amounts("store credit for 15.99.") == "store credit for fifteen dollars and ninety-nine cents."
-    assert spoken_amounts("$1.01") == "one dollar and one cent"
-    assert spoken_amounts("$20") == "twenty dollars"
+    assert spoken_amounts("$1.01") == "One dollar and one cent"
+    assert spoken_amounts("$20") == "Twenty dollars"
 
 
 def _reply(text: str, *, receipt: bool, label: bool) -> ChatReply:
@@ -240,3 +240,19 @@ def test_a_book_found_from_a_description_is_found_not_sure() -> None:
     machine.step(session, "I want to return a book", today=TODAY, now=NOW)
     clicked = machine.step(session, "BLY-22018", today=TODAY, now=NOW)
     assert clicked.template.startswith("Sure, I can return The Midnight Library")
+
+
+def test_a_call_puts_the_email_line_before_the_send_back_deadline() -> None:
+    reply = _reply(
+        "Okay, Becky, your return of Circe is complete. $17.00 is going back to your Visa ending in 4242. "
+        "Your return confirmation receipt is rcpt_ab12, and a prepaid shipping label is ready too. "
+        "You've got 14 days to send the book back with that label. Anything else I can help with?",
+        receipt=True,
+        label=True,
+    )
+    assert spoken_text(reply) == (
+        "Okay, Becky, your return of Circe is complete. Seventeen dollars is going back to your Visa "
+        "ending in 4 2 4 2. I've emailed you your return confirmation receipt and shipping label. "
+        "Once we receive the book, we'll process your refund. You've got 14 days to send the book back "
+        "with that label. Anything else I can help with?"
+    )

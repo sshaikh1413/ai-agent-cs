@@ -450,7 +450,7 @@ class FakeStore:
             }
         card = destination == "original_payment"
         exception_write = exception and destination == "store_credit" and not in_transit
-        label_write = exception_write or in_transit
+        label_write = True  # every return gets a prepaid label
         result = commit_return(
             self.repo,
             customer_id=customer_id,
@@ -471,7 +471,7 @@ class FakeStore:
             carrier=CARRIER_NAME if label_write else None,
             label_id="lbl_fixed" if label_write else None,
         )
-        if result.get("status") == "completed" and (result.get("exception") or result.get("awaitingDelivery")):
+        if result.get("status") == "completed":
             result["address"] = self.address
             self.labels[str(result["labelId"])] = {
                 "_id": result["labelId"],

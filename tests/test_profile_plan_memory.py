@@ -169,7 +169,7 @@ def test_chat_step_matches_the_phase() -> None:
             conversation_id=listed.conversation_id,
         )
     )
-    assert done.step == "Step: receipt"
+    assert done.step == "Step: receipt and label"
     assert "complete" in done.reply.lower()
 
 

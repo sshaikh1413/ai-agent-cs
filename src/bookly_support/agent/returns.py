@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 
+# Days the reader has to send the book back with the prepaid label: from today for a
+# delivered book, from delivery for one still on its way.
+SHIP_BACK_DAYS = 14
+
+
 class DuplicateReturn(Exception):
     """A completed return for this order already exists."""
 
@@ -67,15 +72,15 @@ def _completed(return_doc: dict, receipt_doc: dict) -> dict:
         "brand": receipt_doc.get("brand"),
         "last4": receipt_doc.get("last4"),
     }
+    result["shipBackDays"] = int(return_doc.get("shipBackDays") or SHIP_BACK_DAYS)
+    _shipping_back(result, return_doc)
     if return_doc.get("exception"):
         result["exception"] = True
         result["storeCreditOnly"] = True
         result["refund"] = "store credit"
-        _shipping_back(result, return_doc)
     if return_doc.get("awaitingDelivery"):
         result["awaitingDelivery"] = True
         result["refundOnReceipt"] = True
-        _shipping_back(result, return_doc)
     return result
 
 
@@ -122,19 +127,20 @@ def commit_return(
         "reason": reason,
         "reasonKind": reason_kind,
         "sentiment": sentiment,
+        "shipBackDays": SHIP_BACK_DAYS,
     }
     if exception:
         return_doc["exception"] = True
     if awaiting_delivery:
         # Started before the book arrived. The refund is issued once the book comes back.
         return_doc["awaitingDelivery"] = True
-    if exception or awaiting_delivery:
-        if isinstance(tracking_number, str) and tracking_number.strip():
-            return_doc["trackingNumber"] = tracking_number.strip()
-        if isinstance(carrier, str) and carrier.strip():
-            return_doc["carrier"] = carrier.strip()
-        if isinstance(label_id, str) and label_id.strip():
-            return_doc["labelId"] = label_id.strip()
+    # Every return gets the prepaid label it is sent back with.
+    if isinstance(tracking_number, str) and tracking_number.strip():
+        return_doc["trackingNumber"] = tracking_number.strip()
+    if isinstance(carrier, str) and carrier.strip():
+        return_doc["carrier"] = carrier.strip()
+    if isinstance(label_id, str) and label_id.strip():
+        return_doc["labelId"] = label_id.strip()
     receipt_doc = {
         "_id": receipt_id,
         "returnId": return_id,

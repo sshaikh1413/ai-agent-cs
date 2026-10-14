@@ -26,6 +26,7 @@ RECEIPT = {
             "destination": "original_payment",
             "brand": "Visa",
             "last4": "4242",
+            "shipBackDays": 14,
         }
     ]
 }
