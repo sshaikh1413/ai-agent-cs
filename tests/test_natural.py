@@ -224,3 +224,19 @@ def test_a_receipt_number_sentence_is_not_spoken() -> None:
     assert unspoken_ids("Your return for Circe is set up. Receipt rcpt_ab12. Once the book arrives, send it back.") == (
         "Your return for Circe is set up. Once the book arrives, send it back."
     )
+
+
+def test_a_book_found_from_a_description_is_found_not_sure() -> None:
+    _store, machine, session = _desk()
+    found = machine.step(session, "it had something to do with Midnight", today=TODAY, now=NOW)
+    assert found.template == "Found it! The Midnight Library, order BLY-22018. What made you want to send it back?"
+    assert "not \"Sure\"" in found.instruction
+
+    _store, machine, session = _desk()
+    named = machine.step(session, "I want to return The Midnight Library", today=TODAY, now=NOW)
+    assert named.template.startswith("Sure, I can return The Midnight Library")
+
+    _store, machine, session = _desk()
+    machine.step(session, "I want to return a book", today=TODAY, now=NOW)
+    clicked = machine.step(session, "BLY-22018", today=TODAY, now=NOW)
+    assert clicked.template.startswith("Sure, I can return The Midnight Library")

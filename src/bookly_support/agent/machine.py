@@ -25,6 +25,7 @@ from bookly_support.agent.resolve import (
     asked_title,
     agrees_to_read,
     asks_for_agent,
+    confirms_shown_order,
     is_decline,
     is_in_progress,
     not_this_book,
@@ -188,6 +189,9 @@ class Session:
     match_store: str | None = None
     # This turn came from a voice call: the list is offered, not read unprompted. Not stored.
     voice: bool = field(default=False, repr=False, compare=False)
+    # This turn's book was worked out from a description, part of a title, or a date rather
+    # than its exact title or order id, so Mara says she found it. Not stored.
+    found_by_search: bool = field(default=False, repr=False, compare=False)
     # This turn's validated label. Not stored with the session.
     understanding: Understanding | None = field(default=None, repr=False, compare=False)
 
@@ -617,6 +621,7 @@ class Machine:
             )
 
         selected = matches[0]
+        session.found_by_search = not (named_orders(message, orders) or confirms_shown_order(message))
         detail = run_tool(
             session.phase,
             "get_order",
@@ -1439,10 +1444,17 @@ class Machine:
         genre = str(detail.get("genre") or "").strip().lower()
         session.genre = genre or None
         session.phase = "ask_reason"
+        found = session.found_by_search
         return Turn(
-            template=ask_reason({"title": detail["title"], "orderId": detail["orderId"]}),
+            template=ask_reason({"title": detail["title"], "orderId": detail["orderId"]}, found=found),
             instruction=(
-                "Ask why they want to return this book. "
+                (
+                    "They described the book instead of naming it, and you worked out which one. "
+                    "Open by saying you found it (for example, \"Found it!\"), not \"Sure\". "
+                    if found
+                    else ""
+                )
+                + "Ask why they want to return this book. "
                 "Do not offer a refund yet. Do not recommend a book. "
                 "Do not mention a percent or a discount code. "
                 "Do not say a return has started."
@@ -1629,9 +1641,11 @@ class Machine:
             return self._sign_in(session)
         orders, listed = self._listed(session)
         delivered = [order for order in orders if _is_delivered(order)]
-        chosen = named_orders(message, orders) or _pointed_order(session, orders)
+        named = named_orders(message, orders)
+        chosen = named or _pointed_order(session, orders)
         if not chosen:
             chosen = partial_title_matches(message, orders)
+        session.found_by_search = not named
         if len(chosen) == 1:
             return self._open_window(session, chosen[0], today, listed, now)
         if len(delivered) == 1 and _offer_reply(session) == "accept":

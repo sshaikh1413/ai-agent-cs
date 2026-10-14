@@ -117,7 +117,11 @@ def missing_order() -> str:
     return "I can't find that order on this account."
 
 
-def ask_reason(order: dict) -> str:
+def ask_reason(order: dict, found: bool = False) -> str:
+    """Ask why. When Mara worked out the book from a description, she says she found it."""
+
+    if found:
+        return f"Found it! {order['title']}, order {order['orderId']}. What made you want to send it back?"
     return (
         f"Sure, I can return {order['title']}, order {order['orderId']}. "
         "What made you want to send it back?"
