@@ -41,6 +41,13 @@ from bookly_support.agent.receipt_pdf import ReceiptFactsError, render_return_re
 from bookly_support.agent.recommendations import choose_recommendation
 from bookly_support.agent.resolve import is_in_progress, longest_catalog_title
 from bookly_support.agent.price_match import competitor_price, price_match_record, price_match_result
+from bookly_support.agent.purchase import (
+    book_offer,
+    new_order_id,
+    order_document,
+    placed_result,
+    render_order_confirmation,
+)
 from bookly_support.agent.returns import SHIP_BACK_DAYS, DuplicateReturn, commit_return, return_permitted
 
 RECENT_LIMIT = 10
@@ -97,6 +104,12 @@ class MongoStore:
             [("returnId", 1)],
             unique=True,
             name="uniq_label_return",
+        )
+        self._db.orders.create_index(
+            [("customerId", 1), ("purchaseKey", 1)],
+            unique=True,
+            name="uniq_customer_purchase",
+            partialFilterExpression={"purchaseKey": {"$exists": True}},
         )
         self._db.priceMatches.create_index(
             [("customerId", 1), ("orderId", 1)],
@@ -226,6 +239,60 @@ class MongoStore:
             options["awaitingDelivery"] = True
             options["refundOnReceipt"] = True
         return options
+
+    def catalog_titles(self) -> list[str]:
+        return [row["title"] for row in self._db.catalog.find({}, {"title": 1}) if isinstance(row.get("title"), str)]
+
+    def _catalog_row(self, title: str) -> dict | None:
+        wanted = title.strip().casefold()
+        for row in self._db.catalog.find({}, {"title": 1, "author": 1, "priceCents": 1}):
+            if isinstance(row.get("title"), str) and row["title"].strip().casefold() == wanted:
+                return row
+        return None
+
+    def get_book_offer(self, customer_id: str, title: str, address: str | None = None) -> dict | None:
+        """Price, free 2-day shipping, total, card on file, and where it ships."""
+
+        row = self._catalog_row(title)
+        if row is None:
+            return None
+        payment = self._db.paymentMethods.find_one({"customerId": customer_id})
+        return book_offer(row, payment, address or self._address_text(customer_id))
+
+    def place_order(self, customer_id: str, title: str, address: str | None, purchase_key: str, now: datetime) -> dict:
+        """Place the order once. The same purchase key returns the order already placed."""
+
+        existing = self._db.orders.find_one({"customerId": customer_id, "purchaseKey": purchase_key})
+        if existing is None:
+            offer = self.get_book_offer(customer_id, title, address)
+            if offer is None or not offer.get("cardAvailable") or not offer.get("address"):
+                return {"status": "not_placed", "title": title}
+            for _ in range(5):
+                document = order_document(customer_id, offer, offer["address"], purchase_key, new_order_id(), now)
+                try:
+                    self._db.orders.insert_one(document)
+                    existing = document
+                    break
+                except DuplicateKeyError:
+                    existing = self._db.orders.find_one({"customerId": customer_id, "purchaseKey": purchase_key})
+                    if existing is not None:
+                        break
+            if existing is None:
+                return {"status": "not_placed", "title": title}
+        return self._placed(customer_id, existing)
+
+    def _placed(self, customer_id: str, order: dict) -> dict:
+        row = self._catalog_row(order["lines"][0]["title"]) or {}
+        payment = self._db.paymentMethods.find_one({"_id": order.get("paymentMethodId"), "customerId": customer_id}) or {}
+        return placed_result(order, row.get("author"), payment.get("brand"), payment.get("last4"))
+
+    def order_confirmation_pdf(self, customer_id: str, order_id: str) -> bytes | None:
+        order = self._db.orders.find_one({"_id": order_id, "customerId": customer_id, "placedBy": "desk"})
+        customer = self._db.customers.find_one(get_customer(customer_id))
+        if order is None or customer is None:
+            return None
+        placed = self._placed(customer_id, order)
+        return render_order_confirmation(order, customer, placed.get("author"), placed.get("brand"), placed.get("last4"))
 
     def check_competitor_price(self, title: str, store: str, price_cents: int) -> dict:
         """Simulated: no other store is called. It reports the price the reader gave as found."""

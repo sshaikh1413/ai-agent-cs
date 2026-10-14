@@ -9,6 +9,7 @@ from bookly_support.agent.checker import accept_draft
 from bookly_support.agent.machine import Machine, Session, Turn
 from bookly_support.agent.phrasing import PROFILE_LINES, ClaudePhraser
 from bookly_support.agent.provider import (
+    OrderConfirmation,
     ChatReply,
     ChatRequest,
     DeskInfo,
@@ -97,6 +98,7 @@ class ReturnAgent:
             conversation_id=session.id,
             receipt=receipt_download(turn, customer_id),
             label=label_download(turn, customer_id),
+            confirmation=confirmation_download(turn, customer_id),
             step=turn.step,
             opening=_welcome(prior, memory, name) if started else None,
             choices=[
@@ -171,6 +173,17 @@ def receipt_download(turn: Turn, customer_id: str) -> ReceiptDownload | None:
             receipt_id=receipt_id,
             url=f"/api/receipts/{receipt_id}?customer_id={customer_id}",
         )
+    return None
+
+
+def confirmation_download(turn: Turn, customer_id: str) -> OrderConfirmation | None:
+    """Link for the order this turn actually placed."""
+
+    for tool in turn.tools:
+        if tool.name == "place_order" and tool.payload.get("status") == "placed":
+            order_id = tool.payload.get("orderId")
+            if isinstance(order_id, str) and re.fullmatch(r"BLY-\d+", order_id):
+                return OrderConfirmation(order_id=order_id, url=f"/api/orders/{order_id}/confirmation?customer_id={customer_id}")
     return None
 
 
@@ -292,6 +305,9 @@ def _session(document: dict) -> Session:
         offered_list=bool(document.get("offeredList")),
         match_price_cents=document.get("matchPriceCents"),
         match_store=document.get("matchStore"),
+        purchase_title=document.get("purchaseTitle"),
+        purchase_address=document.get("purchaseAddress"),
+        purchase_key=document.get("purchaseKey"),
     )
 
 
@@ -315,4 +331,7 @@ def _session_doc(session: Session) -> dict:
         "offeredList": session.offered_list,
         "matchPriceCents": session.match_price_cents,
         "matchStore": session.match_store,
+        "purchaseTitle": session.purchase_title,
+        "purchaseAddress": session.purchase_address,
+        "purchaseKey": session.purchase_key,
     }

@@ -87,10 +87,15 @@ def spoken_amounts(text: str) -> str:
 _DOWNLOAD = re.compile(r"\bdownload|\bready\b.*\b(?:receipt|label)\b|\b(?:receipt|label)\b.*\bready\b|\btracking\b", re.IGNORECASE)
 
 
-def emailed_documents(text: str, *, receipt: bool, label: bool) -> str:
+def emailed_documents(text: str, *, receipt: bool, label: bool, confirmation: bool = False) -> str:
     """Swap "ready to download" lines for what a caller needs: it is in their email,
     and the refund follows once the book arrives."""
 
+    if confirmation and not receipt and not label:
+        sentences = [part for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part]
+        kept = [s for s in sentences if not _DOWNLOAD.search(s) and not re.search(r"\bconfirmation\b.*\bready\b", s, re.I)]
+        tail = [kept.pop()] if kept and kept[-1].endswith("?") else []
+        return " ".join([*kept, "I've emailed you your order confirmation.", *tail])
     if not receipt and not label:
         return text
     sentences = [part for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part]
@@ -138,7 +143,12 @@ def spoken_text(reply: ChatReply) -> str:
     """
 
     text = unspoken_ids(reply.reply.strip())
-    text = emailed_documents(text, receipt=reply.receipt is not None, label=reply.label is not None)
+    text = emailed_documents(
+        text,
+        receipt=reply.receipt is not None,
+        label=reply.label is not None,
+        confirmation=reply.confirmation is not None,
+    )
     text = spoken_amounts(text)
     folded = text.casefold()
     extras: list[str] = []
@@ -176,6 +186,7 @@ def reply_payload(reply: ChatReply) -> dict:
         ],
         "receipt": None if reply.receipt is None else reply.receipt.model_dump(),
         "label": None if reply.label is None else reply.label.model_dump(),
+        "confirmation": None if reply.confirmation is None else reply.confirmation.model_dump(),
     }
 
 

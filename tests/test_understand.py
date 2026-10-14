@@ -55,7 +55,7 @@ def _wire(**fields) -> dict:
     answer = {
         "intents": [], "about": "none", "destination": "none", "offer_reply": "none", "article_id": "",
         "reason_kind": "none", "sentiment": "none", "reason_topic": "none", "order_id": "", "reason": "",
-        "match_price": 0, "match_store": "", "ordered_after": "", "ordered_before": "", "confidence": 1.0,
+        "wanted_title": "", "ship_to": "", "match_price": 0, "match_store": "", "ordered_after": "", "ordered_before": "", "confidence": 1.0,
     }
     answer.update(fields)
     return answer

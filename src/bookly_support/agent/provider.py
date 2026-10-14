@@ -87,6 +87,8 @@ ToolName = Literal[
     "issue_parcel_label",
     "check_competitor_price",
     "issue_price_match",
+    "get_book_offer",
+    "place_order",
 ]
 
 
@@ -95,6 +97,13 @@ class ToolTrace(BaseModel):
 
     name: ToolName
     summary: str
+
+
+class OrderConfirmation(BaseModel):
+    """PDF for an order Mara placed."""
+
+    order_id: str
+    url: str
 
 
 class ReceiptDownload(BaseModel):
@@ -127,6 +136,7 @@ class ChatReply(BaseModel):
     conversation_id: str | None = None
     receipt: ReceiptDownload | None = None
     label: ParcelLabel | None = None
+    confirmation: OrderConfirmation | None = None
     step: str
     opening: str | None = None
     choices: list[OrderChoice] = Field(default_factory=list)

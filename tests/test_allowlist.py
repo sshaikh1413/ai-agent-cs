@@ -7,6 +7,7 @@ from bookly_support.agent.allowlist import TOOL_NAMES, ToolNotAllowed, allowed_t
 from bookly_support.agent.discounts import DuplicateDiscount, issue_goodwill_discount
 from bookly_support.agent.eligibility import is_eligible
 from bookly_support.agent.price_match import competitor_price, price_match_record, price_match_result
+from bookly_support.agent.purchase import book_offer, order_document, placed_result
 from bookly_support.agent.resolve import is_in_progress
 from bookly_support.agent.machine import Machine, Session
 from bookly_support.agent.queries import (
@@ -48,7 +49,12 @@ def test_only_the_return_tools_exist() -> None:
         "issue_parcel_label",
         "check_competitor_price",
         "issue_price_match",
+        "get_book_offer",
+        "place_order",
     )
+    # A book can be ordered only at the confirmation step.
+    assert "place_order" in allowed_tools("purchase_confirm")
+    assert all("place_order" not in allowed_tools(phase) for phase in ("identify_order", "done", "choose_destination"))
     # A price match can run only while one is being offered or gathered.
     assert "issue_price_match" in allowed_tools("price_match_details")
     assert "issue_price_match" not in allowed_tools("identify_order")
@@ -59,6 +65,7 @@ def test_only_the_return_tools_exist() -> None:
             "get_order",
             "lookup_catalog",
             "get_policy_article",
+            "get_book_offer",
             "list_customer_discounts",
             "issue_parcel_label",
         }
@@ -72,6 +79,7 @@ def test_only_the_return_tools_exist() -> None:
             "get_order",
             "lookup_catalog",
             "get_policy_article",
+            "get_book_offer",
             "issue_parcel_label",
         }
     )
@@ -92,6 +100,7 @@ def test_only_the_return_tools_exist() -> None:
             "get_order",
             "lookup_catalog",
             "get_policy_article",
+            "get_book_offer",
             "issue_parcel_label",
         }
     )
@@ -105,6 +114,7 @@ def test_only_the_return_tools_exist() -> None:
             "list_recent_orders",
             "get_order",
             "get_policy_article",
+            "get_book_offer",
             "list_customer_discounts",
             "issue_parcel_label",
         }
@@ -330,6 +340,31 @@ class FakeStore:
     def match_catalog_title(self, text: str) -> str | None:
         titles = [str(book.get("title") or "") for book in self.catalog]
         return longest_catalog_title(text, titles)
+
+    def catalog_titles(self) -> list[str]:
+        return [str(book["title"]) for book in self.catalog if book.get("title")]
+
+    def get_book_offer(self, customer_id: str, title: str, address: str | None = None) -> dict | None:
+        assert customer_id == self.customer_id
+        self.calls.append("get_book_offer")
+        row = next((dict(b) for b in self.catalog if str(b.get("title", "")).casefold() == title.casefold()), None)
+        if row is None:
+            return None
+        row.setdefault("priceCents", 1600)
+        return book_offer(row, {"_id": "pm_becky_visa", "brand": "Visa", "last4": "4242"}, address or self.address)
+
+    def place_order(self, customer_id: str, title: str, address: str | None, purchase_key: str, now: datetime) -> dict:
+        assert customer_id == self.customer_id
+        self.calls.append("place_order")
+        placed = self.__dict__.setdefault("placed_orders", {})
+        if purchase_key not in placed:
+            offer = self.get_book_offer(customer_id, title, address)
+            if offer is None:
+                return {"status": "not_placed", "title": title}
+            placed[purchase_key] = order_document(customer_id, offer, offer["address"], purchase_key, f"BLY-5{len(placed):04d}", now)
+        order = placed[purchase_key]
+        author = next((b.get("author") for b in self.catalog if b.get("title") == order["lines"][0]["title"]), None)
+        return placed_result(order, author, "Visa", "4242")
 
     def policy_articles(self) -> list[dict]:
         return [dict(article) for article in ARTICLES]

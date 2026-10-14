@@ -19,6 +19,7 @@ The design rule: **Claude understands and phrases; code decides.** Claude reads 
 - **Order status.** Reads the stored status of an order ("where is my order", "where's the circus book").
 - **Store questions and FAQ.** Answers from Bookly's own policy articles. Typing **FAQ** lists the most-asked questions as buttons, with a *Show more questions* button for the rest.
 - **Books.** Gives the author and a one-line summary from the catalog, and recommends a book the reader doesn't already own (never horror after a horror return).
+- **Ordering a book.** "Can I order one?" after a recommendation (or "I'd like to buy Beach Read") gets a confirmation: the book, its price, free 2-day delivery for desk orders, the total on the card on file, and the saved address. A corrected address applies to that order only and is confirmed again. On "yes", Mara places a real order (once, even if "yes" is repeated), says it arrives in 2 business days, and offers the order confirmation. "Where is my order" then finds it.
 - **Goodwill.** A late delivery gets a one-time 20% discount code.
 - **Memory.** Welcomes a returning reader by name, without repeating what they said last time.
 - **Handoff.** "Speak to a representative", "operator", "agent" and similar requests get a transfer message at any step.
@@ -60,6 +61,7 @@ Each turn goes through four layers:
 | `recommend_book`, `lookup_catalog` | Recommendations, author and summary |
 | `get_policy_article`, `list_customer_discounts` | Store policy answers and the reader's own codes |
 | `check_competitor_price`, `issue_price_match` | A simulated price check at another store, then one price-match refund per order |
+| `get_book_offer`, `place_order` | The price, delivery, card, and address for a book, then the order itself (only at the confirmation step) |
 
 Every tool is scoped to the signed-in customer.
 
@@ -150,6 +152,7 @@ uv run --env-file .env python scripts/seed_empathy.py           # catalog, Bob, 
 uv run --env-file .env python scripts/seed_in_progress.py       # orders still being shipped
 uv run --env-file .env python scripts/seed_past_window.py       # an order past the window, shipping address
 uv run --env-file .env python scripts/seed_policy_articles.py   # store policy articles
+uv run --env-file .env python scripts/seed_prices.py            # catalog prices, for ordering
 ```
 
 ### 4. Run
@@ -190,7 +193,7 @@ Things to try:
 - `What's The Midnight Library about?`
 - `Can I speak to a representative?`
 
-**Reset demo** clears conversations and removes completed returns, receipts, labels, price matches and discount codes, so every book can be returned again. Customers, orders, the catalog and remembered reasons are kept.
+**Reset demo** clears conversations and removes completed returns, receipts, labels, price matches, discount codes and orders placed through Mara, so every book can be returned again. Customers, orders, the catalog and remembered reasons are kept.
 
 ---
 
@@ -246,5 +249,6 @@ tests/                   Offline and live tests, golden labels
 | `GET /api/desk` | The signed-in reader, recent orders and prompts |
 | `WS /api/voice` | A voice call |
 | `GET /api/receipts/{id}`, `GET /api/labels/{id}` | Receipt and shipping-label downloads |
+| `GET /api/orders/{id}/confirmation` | Order confirmation download |
 | `POST /api/demo/reset` | Reset the demo |
 | `GET /api/health` | Health check |

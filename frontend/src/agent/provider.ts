@@ -51,6 +51,8 @@ export type ToolName =
   | "issue_parcel_label"
   | "check_competitor_price"
   | "issue_price_match"
+  | "get_book_offer"
+  | "place_order"
 
 export interface ToolTrace {
   name: ToolName
@@ -59,6 +61,11 @@ export interface ToolTrace {
 
 export interface ReceiptDownload {
   receipt_id: string
+  url: string
+}
+
+export interface OrderConfirmation {
+  order_id: string
   url: string
 }
 
@@ -80,6 +87,7 @@ export interface AgentReply {
   conversation_id?: string
   receipt?: ReceiptDownload
   label?: ParcelLabel
+  confirmation?: OrderConfirmation
   step: string
   opening?: string
   choices: OrderChoice[]
@@ -129,6 +137,8 @@ const TOOLS = new Set<ToolName>([
   "issue_parcel_label",
   "check_competitor_price",
   "issue_price_match",
+  "get_book_offer",
+  "place_order",
 ])
 
 const INTENTS = new Set<AgentIntent>([
@@ -194,6 +204,7 @@ function assertReply(value: unknown): AgentReply {
     tools: assertTools(record.tools),
     conversation_id,
     receipt: assertReceipt(record.receipt),
+    confirmation: assertConfirmation(record.confirmation),
     label: assertLabel(record.label),
     step: record.step,
     opening,
@@ -233,6 +244,15 @@ function assertLabel(value: unknown): ParcelLabel | undefined {
     return undefined
   }
   return { label_id: record.label_id, url: record.url }
+}
+
+function assertConfirmation(value: unknown): OrderConfirmation | undefined {
+  if (value == null || typeof value !== "object") return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.order_id !== "string" || typeof record.url !== "string") return undefined
+  if (!/^BLY-\d+$/.test(record.order_id)) return undefined
+  if (!record.url.startsWith(`/api/orders/${record.order_id}/confirmation`)) return undefined
+  return { order_id: record.order_id, url: record.url }
 }
 
 function assertReceipt(value: unknown): ReceiptDownload | undefined {

@@ -651,3 +651,32 @@ def named_store(text: str) -> str | None:
     if found:
         return found.group(1).strip(" .,!?")
     return None
+
+
+_BUY = re.compile(
+    r"\b(?:(?:can|could|may) i (?:order|buy|purchase)|i(?:'?d| would) like to (?:order|buy|purchase)|"
+    r"i want to (?:order|buy|purchase)|(?:order|buy|purchase) (?:one|a copy|it|that|this)|i'?ll (?:take|buy) a copy)\b",
+    re.IGNORECASE,
+)
+
+
+def wants_to_buy(text: str) -> bool:
+    """They want to order a book: "can I order one?", "I'd like to buy Beach Read"."""
+
+    return _BUY.search(text) is not None
+
+
+_ADDRESS = re.compile(
+    r"\b\d{1,6}\s+[A-Za-z0-9 .'-]+?\s(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|way|court|ct|place|pl|terrace|ter)\b.*",
+    re.IGNORECASE,
+)
+
+
+def stated_address(text: str) -> str | None:
+    """A street address in the message, as one line, or None."""
+
+    found = _ADDRESS.search(text)
+    if not found:
+        return None
+    address = " ".join(found.group(0).split()).strip(" .")
+    return re.sub(r"(?:\s+(?:instead|please|thanks|thank you))+$", "", address, flags=re.IGNORECASE).strip(" .,")

@@ -120,6 +120,15 @@ def reset_bookly_demo(database) -> dict[str, int | str]:
     if index is not None:
         index([("customerId", 1)], unique=True, name="uniq_customer_memory")
 
+    # Orders placed through the desk are demo state: remove them and anything attached first.
+    desk_orders = [doc["_id"] for doc in database.orders.find({"placedBy": "desk"})]
+    if desk_orders:
+        for name in ("returns", "receipts", "labels", "priceMatches"):
+            collection = getattr(database, name, None)
+            if collection is not None:
+                collection.delete_many({"orderId": {"$in": desk_orders}})
+        database.orders.delete_many({"_id": {"$in": desk_orders}})
+
     orders_before = _snapshot(database.orders)
     customers_before = _snapshot(database.customers)
     catalog_before = _snapshot(database.catalog)

@@ -10,6 +10,7 @@ import {
   type DeskInfo,
   type DeskOrder,
   type OrderChoice,
+  type OrderConfirmation,
   type ParcelLabel,
   type ReceiptDownload,
   type ToolTrace,
@@ -30,6 +31,7 @@ type ThreadItem =
       tools: ToolTrace[]
       receipt?: ReceiptDownload
       label?: ParcelLabel
+      confirmation?: OrderConfirmation
       step?: string
       opening?: string
       memory?: boolean
@@ -216,6 +218,7 @@ export function SupportDesk() {
             tools: reply.tools,
             receipt: reply.receipt,
             label: reply.label,
+            confirmation: reply.confirmation,
             step: reply.step,
             opening,
             choices: reply.choices,
@@ -685,8 +688,19 @@ function AssistantBubble({
       {item.step ? (
         <p className="mt-3 border-t border-border pt-2 text-sm text-muted-foreground">{item.step}</p>
       ) : null}
-      {item.receipt || item.label ? (
+      {item.receipt || item.label || item.confirmation ? (
         <div className="mt-3 flex flex-wrap gap-2">
+          {item.confirmation ? (
+            <a
+              href={item.confirmation.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+            >
+              <Download aria-hidden="true" />
+              Open order confirmation
+            </a>
+          ) : null}
           {item.receipt ? (
             <a
               href={item.receipt.url}
@@ -706,7 +720,7 @@ function AssistantBubble({
               className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
             >
               <Download aria-hidden="true" />
-              Open parcel label
+              Open shipping label
             </a>
           ) : null}
         </div>

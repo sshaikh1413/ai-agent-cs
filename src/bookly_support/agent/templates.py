@@ -274,6 +274,45 @@ def dollar_signs(text: str) -> str:
     return _BARE_AMOUNT.sub(r"$\1", text)
 
 
+def purchase_offer(offer: dict, *, new_address: bool = False) -> str:
+    """Confirm the book, the total on the card, and the address before ordering."""
+
+    book = f"{offer['title']} by {offer['author']}" if offer.get("author") else offer["title"]
+    card = f"your {offer['brand']} ending {offer['last4']}"
+    if new_address:
+        return (
+            f"Got it, I'll send it to {offer['address']} instead. {book} is {dollars(offer['price'])} "
+            f"with free 2-day delivery, so the total on {card} is {dollars(offer['total'])}. "
+            "Shall I place the order?"
+        )
+    return (
+        f"Absolutely! {book} is {dollars(offer['price'])} and ships free with 2-day delivery, "
+        f"so the total on {card} is {dollars(offer['total'])}. I'll send it to {offer['address']}. "
+        "Does that look right?"
+    )
+
+
+def purchase_placed(order: dict) -> str:
+    return (
+        f"You're all set! Your order for {order['title']} is placed, order {order['orderId']}. "
+        f"{dollars(order['total'])} is charged to your {order['brand']} ending {order['last4']}, and it will "
+        f"arrive in {order['delivery']} at {order['address']}. Your order confirmation is ready to download. "
+        "Anything else I can help with?"
+    )
+
+
+def purchase_which() -> str:
+    return "Happy to! Which book would you like to order?"
+
+
+def purchase_cancelled() -> str:
+    return "No problem, I haven't placed the order. Anything else I can help with?"
+
+
+def purchase_unavailable(title: str) -> str:
+    return f"I'm sorry, I can't order {title} for you right now."
+
+
 def price_match_offer(title: str, sentiment: str | None = None) -> str:
     """They found it cheaper: good news for them, so no apology. Offer to keep the book
     and refund the difference. Sentiment does not change this line."""

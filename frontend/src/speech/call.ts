@@ -1,4 +1,4 @@
-import type { CustomerId, OrderChoice, ParcelLabel, ReceiptDownload, ToolTrace } from "../agent/provider.ts"
+import type { CustomerId, OrderChoice, OrderConfirmation, ParcelLabel, ReceiptDownload, ToolTrace } from "../agent/provider.ts"
 
 export interface VoiceReply {
   text: string
@@ -9,6 +9,7 @@ export interface VoiceReply {
   tools: ToolTrace[]
   receipt?: ReceiptDownload
   label?: ParcelLabel
+  confirmation?: OrderConfirmation
 }
 
 export interface VoiceSession {
@@ -270,6 +271,7 @@ function readReply(message: Record<string, unknown>): VoiceReply {
     tools: readTools(message.tools),
     receipt: readReceipt(message.receipt),
     label: readLabel(message.label),
+    confirmation: readConfirmation(message.confirmation),
   }
 }
 
@@ -312,6 +314,13 @@ function readReceipt(value: unknown): ReceiptDownload | undefined {
   const record = value as Record<string, unknown>
   if (typeof record.receipt_id !== "string" || typeof record.url !== "string") return undefined
   return { receipt_id: record.receipt_id, url: record.url }
+}
+
+function readConfirmation(value: unknown): OrderConfirmation | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.order_id !== "string" || typeof record.url !== "string") return undefined
+  return { order_id: record.order_id, url: record.url }
 }
 
 function readLabel(value: unknown): ParcelLabel | undefined {

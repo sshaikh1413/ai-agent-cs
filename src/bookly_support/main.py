@@ -134,6 +134,23 @@ def label_pdf(label_id: str, customer_id: str | None = None) -> Response:
     )
 
 
+@app.get("/api/orders/{order_id}/confirmation")
+def order_confirmation_pdf(order_id: str, customer_id: str | None = None) -> Response:
+    if re.fullmatch(r"BLY-\d+", order_id) is None:
+        raise HTTPException(status_code=404, detail="That order isn't on this account.")
+    pdf = get_agent().store.order_confirmation_pdf(_customer(customer_id), order_id)
+    if pdf is None:
+        raise HTTPException(status_code=404, detail="That order isn't on this account.")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{order_id}-confirmation.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.post("/api/demo/reset")
 def demo_reset(request: Request) -> dict[str, int | str]:
     """Restore the seeded return flow. Does not delete customers, catalog, or orders."""

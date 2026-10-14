@@ -28,7 +28,8 @@ ARTICLES: tuple[dict, ...] = (
             "Standard shipping takes 5\u20137 business days. "
             "It is free at $35 and over, and otherwise it is $5.99. "
             "A delivery date is not guaranteed. "
-            "Business days are Monday through Friday."
+            "Business days are Monday through Friday. "
+            "A book ordered through this support desk ships free and arrives in 2 business days."
         ),
         "requiredPhrase": "5\u20137 business days",
         "standardShippingCents": 599,

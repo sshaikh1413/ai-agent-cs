@@ -51,6 +51,11 @@ from bookly_support.agent.templates import (
     ask_match_price,
     ask_match_store,
     ask_title_again,
+    purchase_cancelled,
+    purchase_offer,
+    purchase_placed,
+    purchase_unavailable,
+    purchase_which,
     ask_title_or_date,
     ask_reason,
     ask_what_happened,
@@ -187,6 +192,11 @@ class Session:
     # A lower price found elsewhere, gathered over the price-match turns.
     match_price_cents: int | None = None
     match_store: str | None = None
+    # A book being ordered: its title, a corrected address for this order only, and the key
+    # that makes a repeated yes return the same order.
+    purchase_title: str | None = None
+    purchase_address: str | None = None
+    purchase_key: str | None = None
     # This turn came from a voice call: the list is offered, not read unprompted. Not stored.
     voice: bool = field(default=False, repr=False, compare=False)
     # This turn's book was worked out from a description, part of a title, or a date rather
@@ -257,6 +267,8 @@ class Machine:
         session.understanding = self._understand(session, message, today)
         if _has(session, "human_agent"):
             return self._handoff(session)
+        if _has(session, "buy_book") and self._purchase_can_start(session):
+            return self._start_purchase(session, message)
         if _has(session, "parcel_label"):
             return self._parcel_label(session)
         kind = _about_kind(session)
@@ -281,6 +293,10 @@ class Machine:
             return self._exception_why(session, message, today, now)
         if session.phase == "exception_offer":
             return self._exception_offer(session, message, today, now)
+        if session.phase == "purchase_which":
+            return self._start_purchase(session, message)
+        if session.phase == "purchase_confirm":
+            return self._purchase_confirm(session, message, now)
         if session.phase == "price_match_offer":
             return self._price_match_offer(session, message, today, now)
         if session.phase == "price_match_details":
@@ -1164,6 +1180,142 @@ class Machine:
         session.reason_kind, session.sentiment = _reason_labels(session)
         session.phase = "empathy"
         return self._empathy_and_offer(session, today, now)
+
+    def _purchase_can_start(self, session: Session) -> bool:
+        """Between tasks, any request to buy starts an order. In the middle of a return, only one
+        that names a book does, so "I'll take it" or "yes" stays with the return."""
+
+        if session.phase in {"empathy", "closed", "purchase_confirm", "write"}:
+            return False
+        if session.phase in {"identify_order", "done", "which_book", "purchase_which"}:
+            return True
+        understanding = session.understanding
+        return bool(understanding and understanding.wanted_title)
+
+    def _start_purchase(self, session: Session, message: str) -> Turn:
+        """They want to buy a book: work out which one, then confirm price, card, and address."""
+
+        title = self._purchase_title(session, message)
+        if title is None:
+            session.phase = "purchase_which"
+            return Turn(
+                template=purchase_which(),
+                instruction="They want to order a book but did not say which. Ask which one, in one short question.",
+                intent="clarify",
+                step="Step: which book to order",
+            )
+        offer = run_tool(session.phase, "get_book_offer", lambda: self._store.get_book_offer(session.customer_id, title))
+        if offer is None or not offer.get("cardAvailable") or not offer.get("address"):
+            session.phase = "done"
+            return Turn(
+                template=purchase_unavailable(title),
+                instruction="Say you can't order this book right now. Do not invent a price, a card, or an address.",
+                step="Step: anything else",
+            )
+        session.purchase_title = offer["title"]
+        session.purchase_address = None
+        session.purchase_key = f"{session.id}:{offer['title']}"
+        session.phase = "purchase_confirm"
+        return self._purchase_offer_turn(offer, new_address=False)
+
+    def _purchase_offer_turn(self, offer: dict, *, new_address: bool) -> Turn:
+        return Turn(
+            template=purchase_offer(offer, new_address=new_address),
+            instruction=(
+                "They want to order this book. "
+                + ("Say you'll send it to the new address in the JSON instead. " if new_address else "Start with a warm yes. ")
+                + "Confirm the title and author, the price, free 2-day delivery, the total on the card in the "
+                "JSON, and the address, copied from the JSON. Ask if that looks right before you order. "
+                "Do not say the order is placed."
+            ),
+            tools=[ToolTrace(name="get_book_offer", summary=f"Offer for {offer['title']}.", payload=offer)],
+            required=[offer["title"], offer["total"], str(offer.get("last4") or "")],
+            step="Step: confirm the order",
+        )
+
+    def _purchase_confirm(self, session: Session, message: str, now: datetime) -> Turn:
+        understanding = session.understanding
+        title = session.purchase_title or ""
+        new_address = understanding.ship_to if understanding else None
+        if new_address and re.search(r"\d", new_address):
+            session.purchase_address = new_address
+            offer = run_tool(
+                session.phase,
+                "get_book_offer",
+                lambda: self._store.get_book_offer(session.customer_id, title, new_address),
+            )
+            if offer is not None:
+                return self._purchase_offer_turn(offer, new_address=True)
+        if _has(session, "buy_book"):
+            wanted = self._purchase_title(session, message)
+            if wanted and wanted != title:
+                return self._start_purchase(session, message)
+        reply = _offer_reply(session)
+        if reply == "accept":
+            placed = run_tool(
+                session.phase,
+                "place_order",
+                lambda: self._store.place_order(
+                    session.customer_id, title, session.purchase_address, session.purchase_key or f"{session.id}:{title}", now
+                ),
+            )
+            session.phase = "done"
+            if placed.get("status") != "placed":
+                return Turn(
+                    template=purchase_unavailable(title),
+                    instruction="The order did not go through. Say so. Do not say it was placed.",
+                    tools=[ToolTrace(name="place_order", summary="The order was not placed.", payload=placed)],
+                    step="Step: anything else",
+                )
+            return Turn(
+                template=purchase_placed(placed),
+                instruction=(
+                    "The order is placed. Say so, copying the title, order id, total, card, delivery time, and "
+                    "address from the JSON, and that the order confirmation is ready. Then ask if there's anything else."
+                ),
+                tools=[ToolTrace(name="place_order", summary=f"Placed order {placed['orderId']}.", payload=placed)],
+                required=[placed["orderId"], placed["title"], placed["total"], "2 business days"],
+                step="Step: order placed",
+            )
+        if reply == "refuse":
+            session.phase = "done"
+            return Turn(
+                template=purchase_cancelled(),
+                instruction="They don't want to order. Say you haven't placed it, and ask if there's anything else.",
+                step="Step: anything else",
+            )
+        offer = run_tool(
+            session.phase,
+            "get_book_offer",
+            lambda: self._store.get_book_offer(session.customer_id, title, session.purchase_address),
+        )
+        if offer is None:
+            session.phase = "done"
+            return Turn(template=purchase_unavailable(title), instruction="Say you can't order it right now.", step="Step: anything else")
+        return self._purchase_offer_turn(offer, new_address=False)
+
+    def _purchase_title(self, session: Session, message: str) -> str | None:
+        """The catalog title they mean: named (even misspelled), or the book Mara just suggested."""
+
+        from difflib import get_close_matches
+
+        understanding = session.understanding
+        said = (understanding.wanted_title if understanding else None) or ""
+        titles = list(getattr(self._store, "catalog_titles", lambda: [])())
+        by_key = {t.casefold(): t for t in titles}
+        for text in (said, message):
+            if text:
+                exact = self._store.match_catalog_title(text)
+                if exact:
+                    return exact
+        if said:
+            close = get_close_matches(said.casefold(), list(by_key), n=1, cutoff=0.75)
+            if close:
+                return by_key[close[0]]
+        suggested = session.recommended_title
+        if suggested and (not said or get_close_matches(said.casefold(), [suggested.casefold()], n=1, cutoff=0.6)):
+            return suggested
+        return None
 
     def _offer_price_match(self, session: Session) -> Turn:
         """Found it cheaper elsewhere: offer to keep the book and refund the difference."""

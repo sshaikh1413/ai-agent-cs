@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react"
 import { Download, PhoneOff } from "lucide-react"
 import { Button } from "@/components/ui/button.tsx"
-import type { CustomerId, OrderChoice, ParcelLabel, ReceiptDownload, ToolTrace } from "../agent/provider.ts"
+import type { CustomerId, OrderChoice, OrderConfirmation, ParcelLabel, ReceiptDownload, ToolTrace } from "../agent/provider.ts"
 import { workingLine } from "../agent/working.ts"
 import { startVoiceCall, type VoiceReply, type VoiceSession } from "../speech/call.ts"
 
 type CallLine =
-  | { id: string; role: "mara"; text: string; step?: string; choices?: OrderChoice[]; tools?: ToolTrace[]; receipt?: ReceiptDownload; label?: ParcelLabel }
+  | { id: string; role: "mara"; text: string; step?: string; choices?: OrderChoice[]; tools?: ToolTrace[]; receipt?: ReceiptDownload; label?: ParcelLabel; confirmation?: OrderConfirmation }
   | { id: string; role: "user"; text: string }
 
 const STATUS: Record<string, string> = {
@@ -73,6 +73,7 @@ export function CallPanel({
             tools: reply.tools,
             receipt: reply.receipt,
             label: reply.label,
+            confirmation: reply.confirmation,
           },
         ])
       },
@@ -211,8 +212,19 @@ export function CallPanel({
                   {line.step ? (
                     <p className="mt-2 border-t border-border pt-2 text-sm text-muted-foreground">{line.step}</p>
                   ) : null}
-                  {line.receipt || line.label ? (
+                  {line.receipt || line.label || line.confirmation ? (
                     <div className="mt-2 flex flex-wrap gap-2">
+                      {line.confirmation ? (
+                        <a
+                          href={line.confirmation.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+                        >
+                          <Download aria-hidden="true" />
+                          Open order confirmation
+                        </a>
+                      ) : null}
                       {line.receipt ? (
                         <a
                           href={line.receipt.url}
@@ -232,7 +244,7 @@ export function CallPanel({
                           className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
                         >
                           <Download aria-hidden="true" />
-                          Open parcel label
+                          Open shipping label
                         </a>
                       ) : null}
                     </div>
